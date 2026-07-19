@@ -1,10 +1,15 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
+// CI 环境跳过阿里云镜像（GitHub Actions runner 在国外，直连 Google/Maven Central 更快）
+def useAliyun = System.getenv("CI") == null
+
 buildscript {
     repositories {
-        maven { url 'https://maven.aliyun.com/repository/google' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        if (useAliyun) {
+            maven { url 'https://maven.aliyun.com/repository/google' }
+            maven { url 'https://maven.aliyun.com/repository/public' }
+            maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        }
         google()
         mavenCentral()
     }
@@ -20,9 +25,11 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
-        maven { url 'https://maven.aliyun.com/repository/google' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        if (useAliyun) {
+            maven { url 'https://maven.aliyun.com/repository/google' }
+            maven { url 'https://maven.aliyun.com/repository/public' }
+            maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        }
         google()
         mavenCentral()
     }

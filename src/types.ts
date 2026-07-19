@@ -4,9 +4,10 @@ export interface Question {
   category: string
   question: string
   options: string[]
-  answer: string
+  answer: string // 单选："A"/"B"/"C"/"D"；多选："ABC"/"ABD" 等字母组合
   explanation: string
   difficulty: number
+  type?: 'single' | 'multi' // 题型，缺省为 single
   mnemonic?: string
 }
 
@@ -120,6 +121,8 @@ export interface Settings {
   ambientEnabled: boolean
   musicVolume: number
   sfxVolume: number
+  deepseekApiKey?: string // DeepSeek V4-Flash API Key
+  aiInterpretEnabled?: boolean // 是否启用 AI 解读
 }
 
 // 每日任务

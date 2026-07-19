@@ -20,7 +20,7 @@ export function Layout() {
       <StarField />
       <div className="relative z-10">
         {!isImmersive && <Header />}
-        <main className={isImmersive ? '' : 'pt-16 pb-24 px-3 max-w-5xl mx-auto min-h-screen'}>
+        <main className={isImmersive ? '' : 'pt-24 pb-28 px-3 max-w-5xl mx-auto min-h-screen'}>
           <Outlet />
         </main>
         {!isImmersive && <TabBar />}

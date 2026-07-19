@@ -105,8 +105,9 @@ export function getChapters(licenseId: LicenseId): Chapter[] {
 }
 
 export function getQuestionsByChapter(chapterId: string): Question[] {
-  const [licenseId, , numStr] = chapterId.split('-ch-')
+  const [licenseId, numStr] = chapterId.split('-ch-')
   const chapter = CHAPTERS[licenseId as LicenseId][parseInt(numStr) - 1]
+  if (!chapter) return []
   return QUESTIONS[licenseId as LicenseId].filter((q) => q.category === chapter.category)
 }
 

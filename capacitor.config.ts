@@ -29,6 +29,11 @@ const config: CapacitorConfig = {
       backgroundColor: '#050818',
       overlaysWebView: true,
     },
+    // 启用 CapacitorHttp 原生代理，绕过 WebView 的 CORS 限制
+    // 用于直接调用 DeepSeek API（DeepSeek 不返回 CORS 头）
+    CapacitorHttp: {
+      enabled: true,
+    },
   },
   server: {
     androidScheme: 'https',

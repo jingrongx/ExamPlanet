@@ -4,8 +4,8 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 
-// 隐藏启动闪屏
-function hideBoot() {
+// 隐藏启动闪屏（由 App 组件 useEffect 调用，确保 React 渲染完成后才隐藏）
+export function hideBoot() {
   const boot = document.getElementById('boot')
   if (boot) {
     boot.classList.add('hide')
@@ -20,12 +20,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </React.StrictMode>,
 )
-
-// 渲染后隐藏闪屏
-requestAnimationFrame(() => {
-  hideBoot()
-  setTimeout(hideBoot, 1500)
-})
 
 // 移动端：禁止双击缩放、长按选中等默认行为
 if (typeof window !== 'undefined') {

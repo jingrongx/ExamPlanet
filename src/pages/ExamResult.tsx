@@ -143,7 +143,7 @@ export function ExamResult() {
               <p className="text-sm text-stardust mb-2 leading-relaxed">{q.question}</p>
               <div className="space-y-1.5 mb-2">
                 {q.options.map((opt) => {
-                  const isAns = opt === q.answer
+                  const isAns = opt === (q.options[q.answer.charCodeAt(0) - 65] || q.answer) || opt === q.answer
                   const isPicked = state.answers[q.id] === opt
                   return (
                     <div

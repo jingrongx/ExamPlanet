@@ -54,7 +54,8 @@ export function Mistakes() {
     if (locked || !currentQ || !current) return
     setSelected(opt)
     setLocked(true)
-    const isCorrect = opt === currentQ.answer
+    const correctOpt = currentQ.options[currentQ.answer.charCodeAt(0) - 65] || currentQ.answer
+    const isCorrect = opt === correctOpt || opt === currentQ.answer
     const quality = isCorrect ? 5 : 1
     answer(current.questionId, isCorrect, quality, 5000)
     if (isCorrect) {
@@ -262,7 +263,8 @@ function ReviewSession({
   ttsEnabled: boolean
 }) {
   if (!q) return null
-  const isCorrect = selected === q.answer
+  const correctOpt = q.options[q.answer.charCodeAt(0) - 65] || q.answer
+  const isCorrect = selected === correctOpt || selected === q.answer
   const progress = ((idx + (locked ? 1 : 0)) / total) * 100
   const mastery = getMasteryProgress(card)
 
@@ -302,7 +304,7 @@ function ReviewSession({
 
               <div className="space-y-2.5">
                 {q.options.map((opt, i) => {
-                  const isAns = opt === q.answer
+                  const isAns = opt === (q.options[q.answer.charCodeAt(0) - 65] || q.answer) || opt === q.answer
                   const isPicked = opt === selected
                   let cls = 'glass hover:border-white/30'
                   if (locked) {
@@ -321,7 +323,7 @@ function ReviewSession({
                       <span className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center font-display font-bold text-sm bg-white/5 text-stardust">
                         {locked && isAns ? '✓' : locked && isPicked ? '✗' : String.fromCharCode(65 + i)}
                       </span>
-                      <span className="text-sm text-stardust flex-1">{opt}</span>
+                      <span className="text-sm text-stardust flex-1">{opt.replace(/^[A-D][.、)]\s*/, '')}</span>
                     </motion.button>
                   )
                 })}

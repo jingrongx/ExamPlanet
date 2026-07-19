@@ -73,7 +73,9 @@ function BrowseMode({ questions, licenseColor }: { questions: Question[]; licens
     }
     setExpanded(q.id)
     if (!generated[q.id]) {
-      const mnemonics = generateMnemonic(q.question, q.answer, q.explanation)
+      // answer 可能是字母 "A"/"B"，需转换为完整选项文本
+      const correctOpt = q.options[q.answer.charCodeAt(0) - 65] || q.answer
+      const mnemonics = generateMnemonic(q.question, correctOpt, q.explanation)
       setGenerated((g) => ({ ...g, [q.id]: mnemonics }))
     }
   }

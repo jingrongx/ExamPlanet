@@ -1,58 +1,160 @@
-// AI 记忆口诀生成器（模板匹配 + 关键词提取）
-const MNEMONIC_TEMPLATES = {
-  谐音: [
-    (kw: string) => `「${kw}」谐音记忆：将"${kw}"想象成一个生动的画面，越离谱越好记。`,
-    (kw: string) => `把"${kw}"读出来：${kw.split('').map((c) => c).join('→')}，每个字联想一个图像。`,
-  ],
-  场景: [
-    (kw: string) => `场景记忆：想象你站在考试现场，看到题目"${kw}"时脑海里浮现的画面。`,
-    (kw: string) => `故事联想法：把"${kw}"编进一个有起承转合的小故事，比如它发生在机场/电台/办公室。`,
-  ],
-  口诀: [
-    (kw: string) => `顺口溜：${kw}牢记心，考试不丢分；理解加记忆，轻松拿满分。`,
-    (kw: string) => `节奏口诀：${kw}——快读三遍，闭眼复述，再读三遍，永久记忆。`,
-  ],
-  联想: [
-    (kw: string) => `公式联想：${kw} = 已知概念 + 新线索 → 答案。把陌生信息锚定到熟悉知识上。`,
-    (kw: string) => `对比记忆：把"${kw}"和它的对立面/相似面一起记，区分清楚不易混淆。`,
-  ],
+// AI 记忆口诀生成器
+// 直接给出可背诵的记忆内容，而非"应该这样做"的指导语
+
+// 从答案中提取核心内容（去除 A. / B. 等前缀）
+function cleanAnswer(answer: string): string {
+  return answer.replace(/^[A-D][.、)]\s*/, '').trim()
 }
 
-// 关键词提取（简单版：取题目中的核心名词/动词）
+// 从文本中提取核心实义词（2-6 字中文片段）
 function extractKeywords(text: string): string[] {
-  // 去除常见疑问词、虚词
   const stopWords = new Set([
-    '下列', '下列哪', '关于', '下列关于', '以下', '以下哪', '下列选项', '正确',
-    '错误', '不', '是', '为', '属于', '不属于', '包括', '不包括', '表示', '指',
-    '是指', '称为', '称为', '含义', '含义是', '核心', '主要', '最', '通常',
-    '一般', '应当', '应该', '必须', '可以', '可能', '与', '和', '的', '了',
-    '在', '中', '上', '下', '对', '为', '由', '从', '向', '到', '将', '被',
+    '下列', '关于', '以下', '选项', '正确', '错误', '属于', '包括', '表示',
+    '是指', '称为', '含义', '核心', '主要', '通常', '一般', '应当', '必须',
+    '可以', '可能', '如果', '因此', '因为', '所以', '这个', '那个',
+    '的', '了', '在', '中', '上', '下', '和', '与', '或', '及',
+    '是', '为', '不', '无', '有', '该', '其', '此', '这', '那',
   ])
-
-  // 简单提取 2-4 字中文词
-  const cleaned = text.replace(/[（）《》、，。；：""''（）()\.\?\?！!]/g, ' ')
-  const tokens = cleaned.split(/\s+/).filter((t) => t.length >= 2 && t.length <= 8 && !stopWords.has(t))
-  // 取前 3 个
-  return tokens.slice(0, 3)
+  const cleaned = text.replace(/[（）《》、，。；：""''（）()\.\?\?！!，,；;：:0-9\s]/g, ' ')
+  const tokens = cleaned.split(/\s+/)
+    .filter((t) => t.length >= 2 && t.length <= 8 && !stopWords.has(t) && /^[\u4e00-\u9fa5]+$/.test(t))
+  return [...new Set(tokens)].slice(0, 5)
 }
 
-export function generateMnemonic(question: string, answer: string, explanation: string): string[] {
-  const keywords = extractKeywords(question + ' ' + answer)
-  if (keywords.length === 0) {
-    keywords.push(question.substring(0, 8))
-  }
-  const mainKeyword = keywords[0]
-  const types = Object.keys(MNEMONIC_TEMPLATES) as (keyof typeof MNEMONIC_TEMPLATES)[]
-  const result: string[] = []
-  for (const type of types) {
-    const templates = MNEMONIC_TEMPLATES[type]
-    const tmpl = templates[Math.floor(Math.random() * templates.length)]
-    result.push(`【${type}】${tmpl(mainKeyword)}`)
-  }
-  return result
+// 从解析中提取核心关系/结论
+function extractCoreLogic(explanation: string): string {
+  if (!explanation) return ''
+  // 去掉前缀因果词
+  let s = explanation.replace(/^(这是|因为|由于|根据|按照|说明|表示)\s*/g, '').trim()
+  // 按句号/分号切，取第一句
+  const sentences = s.split(/[。；;！!]/).filter((x) => x.length > 4)
+  if (sentences.length > 0) s = sentences[0].trim()
+  // 截短到 30 字
+  return s.length > 30 ? s.substring(0, 30) : s
 }
 
-// 内置部分经典口诀（针对高频题）
+// 从答案和解析中识别变量关系（如"反向变动"、"成正比"、"等于"）
+function extractRelation(explanation: string, answer: string): string {
+  if (/反向|反比|相反|负相关/.test(explanation + answer)) return '反向变动'
+  if (/正向|正比|同向|同方向|正相关/.test(explanation + answer)) return '同向变动'
+  if (/等于|=|恒等/.test(explanation + answer)) return '恒等关系'
+  if (/大于|高于|超过/.test(explanation + answer)) return '大于关系'
+  if (/小于|低于|不足/.test(explanation + answer)) return '小于关系'
+  return ''
+}
+
+export interface MnemonicResult {
+  type: string
+  content: string
+}
+
+// 生成 4 类口诀：每条都是可直接背诵的具体内容
+export function generateMnemonic(
+  question: string,
+  answer: string,
+  explanation: string,
+): string[] {
+  const ans = cleanAnswer(answer)
+  const kws = extractKeywords(question + ' ' + ans)
+  const mainKw = kws[0] || ans.substring(0, 4) || '该知识点'
+  const secondKw = kws[1] || mainKw
+  const logic = extractCoreLogic(explanation)
+  const relation = extractRelation(explanation, ans)
+
+  const mnemonics: string[] = []
+
+  // 1. 谐音口诀：直接给出谐音短句
+  mnemonics.push(makeHomophone(mainKw, ans))
+
+  // 2. 场景口诀：直接给出场景化短句
+  mnemonics.push(makeScene(mainKw, ans, question))
+
+  // 3. 顺口溜：直接给出可背诵的押韵句
+  mnemonics.push(makeRhyme(mainKw, secondKw, ans, relation))
+
+  // 4. 公式/逻辑：直接给出核心关系
+  mnemonics.push(makeLogic(mainKw, ans, logic, relation))
+
+  return mnemonics
+}
+
+// 1. 谐音口诀：用答案核心字编一句谐音短句
+function makeHomophone(keyword: string, answer: string): string {
+  // 取答案前 2-3 字做谐音
+  const chars = answer.match(/[\u4e00-\u9fa5]/g) || []
+  if (chars.length === 0) {
+    return `【谐音】${answer} —— 多念三遍，读熟即记。`
+  }
+  const coreChars = chars.slice(0, 3).join('')
+  // 谐音映射
+  const homophones: Record<string, string> = {
+    '价': '驾', '需': '虚', '供': '功', '弹': '弹', '率': '率',
+    '量': '亮', '速': '速', '力': '力', '本': '本', '利': '利',
+    '税': '睡', '债': '债', '资': '资', '产': '产', '流': '流',
+    '变': '变', '平': '平', '衡': '衡', '失': '失',
+    '飞': '飞', '升': '升', '降': '降', '增': '增', '减': '减',
+    '正': '正', '反': '反', '高': '高', '低': '低', '大': '大',
+    '小': '小', '多': '多', '少': '少', '长': '长', '短': '短',
+  }
+  const homophoneStr = coreChars.split('').map((c) => homophones[c] || c).join('')
+  return `【谐音】${coreChars} → ${homophoneStr}（${answer}）—— "${keyword}"对应"${homophoneStr}"，多念几遍刻在脑里。`
+}
+
+// 2. 场景口诀：直接给出场景化记忆句
+function makeScene(keyword: string, answer: string, question: string): string {
+  let scene = ''
+  if (/经济|市场|价格|货币|消费|需求|供给/.test(question)) {
+    scene = `超市货架前看价牌：${answer}——${keyword}变，买不买看它脸色。`
+  } else if (/飞行|航|机|空|翼|升力/.test(question)) {
+    scene = `机场看飞机起降：${answer}——${keyword}决定能不能飞得稳。`
+  } else if (/电|波|频|信号|电台/.test(question)) {
+    scene = `电台调试旋钮：${answer}——${keyword}调对才有信号。`
+  } else if (/会计|账|凭证|科目|资产|负债/.test(question)) {
+    scene = `月底财务室记账：${answer}——${keyword}要分清借方贷方。`
+  } else if (/法律|法规|条例|规定/.test(question)) {
+    scene = `翻法规手册：${answer}——${keyword}这一条要记牢。`
+  } else {
+    scene = `考场上看到"${keyword}"：答案就是${answer}。`
+  }
+  return `【场景】${scene}`
+}
+
+// 3. 顺口溜：直接给出押韵的可背诵句
+function makeRhyme(kw1: string, kw2: string, answer: string, relation: string): string {
+  // 把答案缩短到核心词
+  const ansShort = answer.length > 8 ? answer.substring(0, 8) : answer
+  // 根据关系编顺口溜
+  if (relation === '反向变动') {
+    return `【口诀】${kw1}记心间，${ansShort}反向变——此长彼消，反向相关。`
+  }
+  if (relation === '同向变动') {
+    return `【口诀】${kw1}记心间，${ansShort}同向变——齐涨齐落，同向相关。`
+  }
+  if (relation === '恒等关系') {
+    return `【口诀】${ansShort}——左右相等，恒等不变，记住这个等式就得分。`
+  }
+  // 默认：关键词 + 答案
+  return `【口诀】${kw1}要分清，${kw2}要记牢；${ansShort}是答案，考试不丢分。`
+}
+
+// 4. 公式/逻辑：直接给出核心关系或结论
+function makeLogic(keyword: string, answer: string, logic: string, relation: string): string {
+  if (relation === '反向变动') {
+    return `【公式】${keyword} ↑ → ${answer} ↓；${keyword} ↓ → ${answer} ↑（反向相关）`
+  }
+  if (relation === '同向变动') {
+    return `【公式】${keyword} ↑ → ${answer} ↑；${keyword} ↓ → ${answer} ↓（同向相关）`
+  }
+  if (relation === '恒等关系') {
+    return `【公式】${answer}（恒等式，左右必相等）`
+  }
+  if (logic) {
+    return `【结论】${logic}——记住这句，${answer}就是必然结果。`
+  }
+  return `【结论】${keyword} → ${answer}（直接对应，背下即可）`
+}
+
+// 内置经典口诀（高频题人工编写，优先于生成）
 export const BUILTIN_MNEMONICS: Record<string, string> = {
   'UAV-020': '伯努利伯伯流得快，压力大就压力大（流速大压强小，流速小压强大）',
   'UAV-021': '失速=超临界迎角，记住"过犹不及"——迎角过大反而升力崩塌',

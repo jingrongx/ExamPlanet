@@ -1,0 +1,130 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '自定义版本号（如 v1.0.1，留空则自动生成）'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拿全部历史，用于生成 changelog
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-licenses: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Decode signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/ci-release.keystore
+          ls -la android/ci-release.keystore
+
+      - name: Build Release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Get current date
+        id: date
+        run: |
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+          echo "time=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
+
+      - name: Generate version tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            # 自动生成：基于今日日期 + 当日推送序号
+            DATE=$(date +'%Y.%m.%d')
+            COUNT=$(git rev-list --count --since="$(date +'%Y-%m-%dT00:00:00')" HEAD || echo "1")
+            echo "name=v${DATE}.$COUNT" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate release notes from commits
+        id: notes
+        run: |
+          # 获取上一个 tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            # 没有 tag 时取最近 50 条
+            COMMITS=$(git log --pretty=format:"- %s (%h)" -50)
+          else
+            COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"- %s (%h)")
+          fi
+          # 写入文件，避免多行变量问题
+          {
+            echo "## 📦 考证星球 ${{ steps.tag.outputs.name }}"
+            echo ""
+            echo "**构建时间**: ${{ steps.date.outputs.time }}"
+            echo ""
+            echo "### 📝 提交记录"
+            echo ""
+            echo "$COMMITS"
+            echo ""
+            echo "### 📥 安装方式"
+            echo ""
+            echo "下载下方 \`app-release.apk\`，手机开启「允许安装未知来源」后点击安装。"
+          } > release_notes.md
+          echo "len=$(wc -c < release_notes.md)" >> $GITHUB_OUTPUT
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: 考证星球 ${{ steps.tag.outputs.name }}
+          body_path: release_notes.md
+          files: android/app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

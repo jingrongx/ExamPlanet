@@ -61,7 +61,8 @@ export function Exam() {
     let correct = 0
     for (const question of examQuestions) {
       const picked = answers[question.id]
-      const isCorrect = picked === question.answer
+      const correctOpt = question.options[question.answer.charCodeAt(0) - 65] || question.answer
+      const isCorrect = picked === correctOpt || picked === question.answer
       if (isCorrect) correct++
       // 记录到 store（quality 不影响 SRS 因 exam 不进错题炉的 quality 判断）
       answer(question.id, isCorrect, isCorrect ? 4 : 1, 10000)

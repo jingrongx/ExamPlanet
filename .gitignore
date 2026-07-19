@@ -52,3 +52,10 @@ tmp/
 *.keystore
 *.jks
 keystore.properties
+ci-release.keystore
+*.keystore.b64
+
+# ===== 临时调试脚本与截图 =====
+scripts/cdp-*.mjs
+scripts/png-*.mjs
+scripts/*.png

@@ -4,6 +4,7 @@ import { useState, useRef } from 'react'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
 import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume } from '../engine/audio'
+import { testApiKey } from '../services/ai'
 
 export function Settings() {
   const navigate = useNavigate()
@@ -13,6 +14,9 @@ export function Settings() {
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const [apiKeyInput, setApiKeyInput] = useState(settings.deepseekApiKey || '')
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   const toggle = (key: keyof typeof settings, value: boolean) => {
     playButton()
@@ -78,6 +82,26 @@ export function Settings() {
     }
   }
 
+  const saveApiKey = () => {
+    playButton()
+    updateSettings({ deepseekApiKey: apiKeyInput.trim() })
+    toast('API Key 已保存', 'success')
+  }
+
+  const handleTestApi = async () => {
+    if (!apiKeyInput.trim()) {
+      toast('请先填写 API Key', 'info')
+      return
+    }
+    setTesting(true)
+    toast('正在测试连接...', 'info')
+    // 先保存最新值再测试
+    updateSettings({ deepseekApiKey: apiKeyInput.trim() })
+    const result = await testApiKey(apiKeyInput.trim())
+    setTesting(false)
+    toast(result.message, result.ok ? 'success' : 'error')
+  }
+
   return (
     <div className="space-y-4">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center pt-2">
@@ -132,6 +156,59 @@ export function Settings() {
           <div className="p-4 flex gap-2">
             <NeonButton variant="ghost" onClick={testTTS} className="flex-1 text-xs">🔊 测试 TTS</NeonButton>
             <NeonButton variant="ghost" onClick={() => stopSpeak()} className="flex-1 text-xs">⏹ 停止朗读</NeonButton>
+          </div>
+        </GlassCard>
+      </section>
+
+      {/* AI 解读设置 */}
+      <section>
+        <h3 className="font-display font-bold text-sm neon-text-cyan mb-2 px-1">🤖 AI 解读 · DeepSeek V4-Flash</h3>
+        <GlassCard className="divide-y divide-white/5">
+          <ToggleRow
+            label="答题后 AI 解读"
+            desc="每题答完后自动调用 AI 讲解题型、思路与背景知识"
+            value={!!settings.aiInterpretEnabled}
+            onChange={(v) => toggle('aiInterpretEnabled', v)}
+          />
+          <div className="p-4 space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm text-stardust/80">DeepSeek API Key</span>
+                <button
+                  onClick={() => setShowApiKey((s) => !s)}
+                  className="text-[10px] text-neon-cyan hover:text-neon-pink"
+                >
+                  {showApiKey ? '隐藏' : '显示'}
+                </button>
+              </div>
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="sk-xxxxxxxxxxxx"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full px-3 py-2 rounded-xl glass text-sm text-stardust placeholder-stardust/30 focus:outline-none focus:border-neon-cyan/50"
+                style={{ border: '1px solid rgba(0,245,255,0.2)' }}
+              />
+              <div className="text-[10px] text-stardust/40 mt-1 leading-relaxed">
+                到 <span className="font-mono text-neon-cyan/70">platform.deepseek.com</span> 控制台创建 API Key。Key 仅保存在本地，不上传任何服务器。
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <NeonButton variant="secondary" onClick={saveApiKey} className="flex-1 text-xs">
+                💾 保存 Key
+              </NeonButton>
+              <NeonButton
+                variant="ghost"
+                onClick={handleTestApi}
+                disabled={testing}
+                className="flex-1 text-xs"
+              >
+                {testing ? '测试中...' : '🔌 测试连接'}
+              </NeonButton>
+            </div>
           </div>
         </GlassCard>
       </section>

@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getLicense, getQuestionsByChapter } from '../data/licenses'
 import { useGameStore, getRankByExp } from '../store/useGameStore'
 import { getMnemonic, generateMnemonic } from '../engine/mnemonic'
@@ -10,13 +10,30 @@ import {
   speak, stopSpeak, playButton,
 } from '../engine/audio'
 import { CoinBurst, ComboFlash, CritFlash, WrongShake, CorrectGlow, RankUpBanner } from '../components/effects/Effects'
+import { streamInterpretQuestion } from '../services/ai'
 import type { Question } from '../types'
+
+// 判断是否多选题：type === 'multi' 或 answer 多于 1 个字母
+function isMultiChoice(q: Question): boolean {
+  return q.type === 'multi' || q.answer.toUpperCase().replace(/[^A-D]/g, '').length > 1
+}
+
+// 把选项文本转换为对应的字母
+function optionToLetter(opt: string, options: string[]): string {
+  const idx = options.indexOf(opt)
+  return idx >= 0 ? String.fromCharCode(65 + idx) : ''
+}
+
+// 去除选项自带的 A. 前缀
+function cleanOption(opt: string): string {
+  return opt.replace(/^[A-D][.、)]\s*/, '')
+}
 
 export function Quiz() {
   const { id, nodeId } = useParams<{ id: string; nodeId: string }>()
   const navigate = useNavigate()
   const toast = useToast()
-  const { answer, settings, combo, passNode, nodeProgress } = useGameStore()
+  const { answer, settings, combo, passNode, aiInterpretCache, setAiInterpret } = useGameStore()
 
   const license = id ? getLicense(id as any) : null
   const questions = useMemo<Question[]>(() => {
@@ -25,7 +42,8 @@ export function Quiz() {
   }, [nodeId])
 
   const [idx, setIdx] = useState(0)
-  const [selected, setSelected] = useState<string | null>(null)
+  // 单选：存一个选项；多选：存多个选项
+  const [selected, setSelected] = useState<string[]>([])
   const [locked, setLocked] = useState(false)
   const [startTime, setStartTime] = useState(Date.now())
   const [correctCount, setCorrectCount] = useState(0)
@@ -37,22 +55,104 @@ export function Quiz() {
   const [rankUpTrigger, setRankUpTrigger] = useState(0)
   const [rankUpName, setRankUpName] = useState('')
 
+  // AI 解读相关
+  const [aiText, setAiText] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const aiAbortRef = useRef<AbortController | null>(null)
+  // 记录最近一次作答信息，供 AI 解读使用
+  const lastAnswerRef = useRef<{ userLetters: string; correct: boolean }>({ userLetters: '', correct: false })
+
   const q = questions[idx]
+  const multi = q ? isMultiChoice(q) : false
 
   useEffect(() => {
     setStartTime(Date.now())
-    setSelected(null)
+    setSelected([])
     setLocked(false)
+    // 切题时重置 AI 解读状态；如果缓存中有，直接展示缓存内容
+    setAiLoading(false)
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort()
+      aiAbortRef.current = null
+    }
+    const cached = q ? (aiInterpretCache[q.id] || '') : ''
+    setAiText(cached)
   }, [idx])
 
-  const handleSelect = useCallback((opt: string) => {
-    if (locked || !q) return
-    setSelected(opt)
+  // 组件卸载时取消 AI 请求
+  useEffect(() => {
+    return () => {
+      if (aiAbortRef.current) {
+        aiAbortRef.current.abort()
+      }
+    }
+  }, [])
+
+  // 触发 AI 解读（force=true 时强制重新生成，忽略缓存）
+  const triggerAiInterpret = useCallback(async (question: Question, userAnsLetters: string, correct: boolean, force: boolean = false) => {
+    if (!settings.aiInterpretEnabled) return
+    if (!settings.deepseekApiKey) {
+      setAiText('⚠️ 未配置 DeepSeek API Key，请在「设置」中填写后开启 AI 解读。')
+      return
+    }
+    // 命中缓存且非强制刷新：直接展示缓存
+    if (!force) {
+      const cached = aiInterpretCache[question.id]
+      if (cached) {
+        setAiText(cached)
+        return
+      }
+    }
+    // 取消上一个请求
+    if (aiAbortRef.current) aiAbortRef.current.abort()
+    const controller = new AbortController()
+    aiAbortRef.current = controller
+
+    setAiLoading(true)
+    setAiText('')
+    let firstChunk = true
+    let accumulated = ''
+    await streamInterpretQuestion(
+      {
+        question: question.question,
+        options: question.options,
+        answer: question.answer,
+        explanation: question.explanation,
+        type: isMultiChoice(question) ? 'multi' : 'single',
+        userAnswer: userAnsLetters,
+        isCorrect: correct,
+        licenseName: license?.name,
+      },
+      settings.deepseekApiKey,
+      (chunk) => {
+        if (firstChunk) {
+          setAiLoading(false)
+          firstChunk = false
+        }
+        accumulated += chunk
+        setAiText(accumulated)
+      },
+      controller.signal,
+    )
+    if (firstChunk) setAiLoading(false)
+    // 完成后保存到缓存（仅当有内容且非错误提示）
+    if (accumulated && !accumulated.startsWith('⚠️')) {
+      setAiInterpret(question.id, accumulated)
+    }
+  }, [settings.aiInterpretEnabled, settings.deepseekApiKey, license?.name, aiInterpretCache, setAiInterpret])
+
+  const commitAnswer = useCallback((opts: string[]) => {
+    if (!q || opts.length === 0) return
+    setSelected(opts)
     setLocked(true)
     const timeSpent = Date.now() - startTime
-    const isCorrect = opt === q.answer
-    const quality = isCorrect ? (timeSpent < 8000 ? 5 : 4) : 1
 
+    // 计算 user 答案字母与正确字母集合
+    const userLetters = opts.map((o) => optionToLetter(o, q.options)).filter(Boolean).sort().join('').toUpperCase()
+    const correctLetters = q.answer.toUpperCase().replace(/[^A-D]/g, '').split('').sort().join('')
+    const isCorrect = userLetters === correctLetters
+
+    const quality = isCorrect ? (timeSpent < 8000 ? 5 : 4) : 1
     const result = answer(q.id, isCorrect, quality, timeSpent)
 
     if (isCorrect) {
@@ -79,21 +179,46 @@ export function Quiz() {
     } else {
       setWrongShake((x) => x + 1)
       playWrong()
-      toast(`答错 · 正确答案：${q.answer}`, 'error')
+      // 显示正确答案（多选展示全部，单选展示对应选项文本）
+      const correctOptTexts = correctLetters.split('').map((l) => {
+        const i = l.charCodeAt(0) - 65
+        return q.options[i] ? cleanOption(q.options[i]) : l
+      })
+      toast(`答错 · 正确答案：${correctLetters.split('').join('、')} ${correctOptTexts.join('｜')}`, 'error')
     }
 
     if (settings.ttsEnabled) {
       setTimeout(() => speak(q.explanation), 600)
     }
-  }, [locked, q, startTime, answer, combo, settings.ttsEnabled, toast])
+
+    // 记录作答信息，等待用户点击 AI 解读按钮时使用
+    lastAnswerRef.current = { userLetters, correct: isCorrect }
+  }, [q, startTime, answer, combo, settings.ttsEnabled, toast, triggerAiInterpret])
+
+  const handleSelect = useCallback((opt: string) => {
+    if (locked || !q) return
+    if (multi) {
+      // 多选：切换选中
+      setSelected((prev) =>
+        prev.includes(opt) ? prev.filter((o) => o !== opt) : [...prev, opt],
+      )
+    } else {
+      // 单选：直接作答
+      commitAnswer([opt])
+    }
+  }, [locked, q, multi, commitAnswer])
 
   const next = useCallback(() => {
     stopSpeak()
     playButton()
+    // 取消未完成的 AI 请求
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort()
+      aiAbortRef.current = null
+    }
     if (idx + 1 >= questions.length) {
       // 完成
       const perfect = correctCount === questions.length
-      const passed = correctCount >= Math.ceil(questions.length * 0.6)
       if (nodeId) {
         passNode(nodeId, perfect)
       }
@@ -125,13 +250,18 @@ export function Quiz() {
   }
 
   const progress = ((idx + (locked ? 1 : 0)) / questions.length) * 100
-  const isCorrect = selected === q?.answer
-  const mnemonic = q ? (getMnemonic(q.id) || generateMnemonic(q.question, q.answer, q.explanation)[0]) : ''
+  // 正确字母集合
+  const correctLetters = q.answer.toUpperCase().replace(/[^A-D]/g, '').split('').sort().join('')
+  // 用户字母集合
+  const userLetters = selected.map((o) => optionToLetter(o, q.options)).filter(Boolean).sort().join('').toUpperCase()
+  const isCorrect = locked && userLetters === correctLetters
+  const mnemonic = q ? (getMnemonic(q.id) || generateMnemonic(q.question, cleanOption(q.options[q.answer.charCodeAt(0) - 65] || q.answer), q.explanation)[0]) : ''
+  const canSubmitMulti = multi && !locked && selected.length >= 1
 
   return (
     <div className="min-h-screen flex flex-col">
       {/* 顶部进度条 */}
-      <div className="fixed top-0 left-0 right-0 z-30 pt-3 px-3">
+      <div className="fixed top-0 left-0 right-0 z-30 px-3" style={{ paddingTop: 'calc(var(--safe-top) + 0.75rem)' }}>
         <div className="max-w-3xl mx-auto flex items-center gap-3">
           <button
             onClick={() => { stopSpeak(); playButton(); navigate(`/license/${license.id}`) }}
@@ -153,12 +283,30 @@ export function Quiz() {
           </div>
         </div>
         <div className="max-w-3xl mx-auto mt-1.5 text-center">
-          <span className="text-[10px] font-mono text-stardust/50">{idx + 1} / {questions.length} · {license.name}</span>
+          <span className="text-[10px] font-mono text-stardust/50">
+            {idx + 1} / {questions.length} · {license.name}
+          </span>
+          {multi && (
+            <span
+              className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(255,46,136,0.15)', color: '#ff2e88', border: '1px solid rgba(255,46,136,0.4)' }}
+            >
+              多选题
+            </span>
+          )}
+          {!multi && (
+            <span
+              className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(0,245,255,0.12)', color: '#00f5ff', border: '1px solid rgba(0,245,255,0.35)' }}
+            >
+              单选题
+            </span>
+          )}
         </div>
       </div>
 
       {/* 主体 */}
-      <div className="flex-1 pt-24 pb-6 px-3 max-w-3xl mx-auto w-full">
+      <div className="flex-1 px-3 max-w-3xl mx-auto w-full" style={{ paddingTop: 'calc(var(--safe-top) + 5rem)', paddingBottom: 'calc(var(--safe-bottom) + 5rem)' }}>
         <WrongShake trigger={wrongShake}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -179,6 +327,11 @@ export function Quiz() {
                   </div>
                   <div className="flex-1">
                     <p className="text-base leading-relaxed text-stardust">{q?.question}</p>
+                    {multi && (
+                      <div className="mt-1.5 text-[11px] text-neon-pink/80">
+                        ⓘ 多选题：可勾选多个选项，下方「确认答案」提交
+                      </div>
+                    )}
                     {settings.ttsEnabled && (
                       <button
                         onClick={() => speak(q?.question || '')}
@@ -194,14 +347,17 @@ export function Quiz() {
               {/* 选项 */}
               <div className="space-y-2.5">
                 {q?.options.map((opt, i) => {
-                  const isAns = opt === q.answer
-                  const isPicked = opt === selected
+                  const cleanOpt = cleanOption(opt)
+                  const letter = String.fromCharCode(65 + i)
+                  const isAns = correctLetters.includes(letter)
+                  const isPicked = selected.includes(opt)
                   let cls = 'glass hover:border-white/30'
-                  let prefix = String.fromCharCode(65 + i)
                   if (locked) {
                     if (isAns) cls = 'border-neon-green/70 bg-neon-green/10 shadow-[0_0_20px_rgba(57,255,20,0.3)]'
                     else if (isPicked) cls = 'border-neon-red/70 bg-neon-red/10'
                     else cls = 'opacity-40'
+                  } else if (multi && isPicked) {
+                    cls = 'border-neon-cyan/70 bg-neon-cyan/10'
                   }
                   return (
                     <motion.button
@@ -214,19 +370,39 @@ export function Quiz() {
                       <span
                         className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center font-display font-bold text-sm"
                         style={{
-                          background: locked && isAns ? '#39ff1420' : locked && isPicked ? '#ff386020' : 'rgba(255,255,255,0.05)',
-                          color: locked && isAns ? '#39ff14' : locked && isPicked ? '#ff3860' : '#e0e0ff',
+                          background: locked && isAns ? '#39ff1420' : locked && isPicked ? '#ff386020' : (multi && isPicked) ? '#00f5ff20' : 'rgba(255,255,255,0.05)',
+                          color: locked && isAns ? '#39ff14' : locked && isPicked ? '#ff3860' : (multi && isPicked) ? '#00f5ff' : '#e0e0ff',
                         }}
                       >
-                        {locked && isAns ? '✓' : locked && isPicked ? '✗' : prefix}
+                        {locked && isAns ? '✓' : locked && isPicked ? '✗' : (multi && isPicked) ? '✓' : letter}
                       </span>
-                      <span className="text-sm text-stardust flex-1">{opt}</span>
+                      <span className="text-sm text-stardust flex-1">{cleanOpt}</span>
                     </motion.button>
                   )
                 })}
               </div>
 
-              {/* 解析 + 口诀 */}
+              {/* 多选提交按钮 */}
+              <AnimatePresence>
+                {canSubmitMulti && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="mt-3"
+                  >
+                    <NeonButton
+                      variant="primary"
+                      onClick={() => commitAnswer(selected)}
+                      className="w-full text-sm"
+                    >
+                      确认答案（已选 {selected.length} 项）
+                    </NeonButton>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* 解析 + 口诀 + AI 解读 */}
               <AnimatePresence>
                 {locked && (
                   <motion.div
@@ -234,7 +410,7 @@ export function Quiz() {
                     animate={{ opacity: 1, y: 0, height: 'auto' }}
                     className="mt-4 space-y-3"
                   >
-                    <GlassCard className="p-4 border-l-2" >
+                    <GlassCard className="p-4 border-l-2">
                       <div className="flex items-center gap-2 mb-1.5">
                         <span className="text-sm">💡</span>
                         <span className="font-tech font-bold text-sm neon-text-cyan">解析</span>
@@ -248,9 +424,99 @@ export function Quiz() {
                       </div>
                       <p className="text-sm text-stardust/80 leading-relaxed">{mnemonic}</p>
                     </div>
-                    <NeonButton onClick={next} className="w-full" variant={isCorrect ? 'primary' : 'secondary'}>
-                      {idx + 1 >= questions.length ? '完成关卡 🏁' : '下一题 →'}
-                    </NeonButton>
+
+                    {/* AI 解读 */}
+                    {settings.aiInterpretEnabled && (
+                      <div className="glass p-4 rounded-2xl" style={{ borderLeft: '2px solid #ff2e88' }}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">🤖</span>
+                            <span className="font-tech font-bold text-sm neon-text-pink">AI 解读 · DeepSeek V4-Flash</span>
+                            {aiText && !aiLoading && !aiText.startsWith('⚠️') && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-neon-cyan/15 text-neon-cyan/80">
+                                {aiInterpretCache[q?.id || ''] ? '已缓存' : '已生成'}
+                              </span>
+                            )}
+                          </div>
+                          {aiLoading && (
+                            <span className="text-[10px] text-stardust/50 animate-pulse">思考中...</span>
+                          )}
+                        </div>
+
+                        {/* 状态分支：加载中 / 有文本 / 空闲 */}
+                        {aiLoading && !aiText ? (
+                          <div className="flex items-center gap-1.5 text-xs text-stardust/50">
+                            <motion.span
+                              animate={{ opacity: [0.3, 1, 0.3] }}
+                              transition={{ duration: 1.2, repeat: Infinity }}
+                            >
+                              正在生成解读…
+                            </motion.span>
+                          </div>
+                        ) : aiText ? (
+                          <>
+                            <div className="text-sm text-stardust/85 leading-relaxed whitespace-pre-wrap break-words">
+                              {renderAiText(aiText)}
+                            </div>
+                            {/* 重新生成按钮 */}
+                            {!aiLoading && !aiText.startsWith('⚠️') && (
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  onClick={() => {
+                                    playButton()
+                                    if (!q) return
+                                    triggerAiInterpret(q, lastAnswerRef.current.userLetters, lastAnswerRef.current.correct, true)
+                                  }}
+                                  className="text-[11px] px-3 py-1.5 rounded-lg glass text-neon-pink hover:text-neon-cyan transition-colors"
+                                >
+                                  🔄 重新生成
+                                </button>
+                              </div>
+                            )}
+                            {/* 错误提示重试 */}
+                            {!aiLoading && aiText.startsWith('⚠️') && (
+                              <div className="mt-3">
+                                <button
+                                  onClick={() => {
+                                    playButton()
+                                    if (!q) return
+                                    triggerAiInterpret(q, lastAnswerRef.current.userLetters, lastAnswerRef.current.correct, true)
+                                  }}
+                                  className="text-[11px] px-3 py-1.5 rounded-lg glass text-neon-cyan hover:text-neon-pink transition-colors"
+                                >
+                                  🔁 重试
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs text-stardust/40 mb-2.5">
+                              {settings.deepseekApiKey
+                                ? '点击下方按钮让 AI 讲解题型、解题思路与背景知识（仅生成一次，自动缓存）'
+                                : '⚠️ 请先在「设置」中配置 DeepSeek API Key'}
+                            </div>
+                            {settings.deepseekApiKey && (
+                              <button
+                                onClick={() => {
+                                  playButton()
+                                  if (!q) return
+                                  triggerAiInterpret(q, lastAnswerRef.current.userLetters, lastAnswerRef.current.correct)
+                                }}
+                                className="text-xs px-3 py-2 rounded-xl font-tech font-bold"
+                                style={{
+                                  background: 'rgba(255,46,136,0.15)',
+                                  color: '#ff2e88',
+                                  border: '1px solid rgba(255,46,136,0.45)',
+                                }}
+                              >
+                                🤖 点击 AI 解读本题
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -258,6 +524,25 @@ export function Quiz() {
           </AnimatePresence>
         </WrongShake>
       </div>
+
+      {/* 底部固定"下一题"按钮栏 */}
+      <AnimatePresence>
+        {locked && (
+          <motion.div
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            className="fixed bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-2"
+            style={{ paddingBottom: 'calc(var(--safe-bottom) + 0.75rem)', background: 'linear-gradient(to top, rgba(5,8,24,0.95), rgba(5,8,24,0.7) 70%, transparent)' }}
+          >
+            <div className="max-w-3xl mx-auto">
+              <NeonButton onClick={next} className="w-full" variant={isCorrect ? 'primary' : 'secondary'}>
+                {idx + 1 >= questions.length ? '完成关卡 🏁' : '下一题 →'}
+              </NeonButton>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 特效层 */}
       <CoinBurst trigger={coinBurst} />
@@ -267,6 +552,45 @@ export function Quiz() {
       <RankUpBanner trigger={rankUpTrigger} rankName={rankUpName} />
     </div>
   )
+}
+
+// 把 AI 返回的 ## 标题 + 内容简单渲染为分段（无需 markdown 引擎）
+function renderAiText(text: string): JSX.Element {
+  const parts = text.split(/(^## .+$)/m).filter(Boolean)
+  const elements: JSX.Element[] = []
+  parts.forEach((part, i) => {
+    if (part.startsWith('## ')) {
+      const title = part.slice(3).trim()
+      const colors: Record<string, string> = {
+        '题型': '#00f5ff',
+        '解题思路': '#39ff14',
+        '背景知识': '#ffd700',
+        '易错提醒': '#ff2e88',
+      }
+      let color = '#00f5ff'
+      for (const k of Object.keys(colors)) {
+        if (title.includes(k)) { color = colors[k]; break }
+      }
+      elements.push(
+        <div key={`t-${i}`} className="mt-2 first:mt-0 font-tech font-bold text-xs" style={{ color }}>
+          {title}
+        </div>,
+      )
+    } else {
+      const content = part.trim()
+      if (content) {
+        elements.push(
+          <p key={`p-${i}`} className="mt-1 text-sm text-stardust/85 leading-relaxed">
+            {content}
+          </p>,
+        )
+      }
+    }
+  })
+  if (elements.length === 0) {
+    return <>{text}</>
+  }
+  return <>{elements}</>
 }
 
 function QuizResult({ correct, total, onBack, onRetry }: { correct: number; total: number; onBack: () => void; onRetry: () => void }) {

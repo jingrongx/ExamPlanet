@@ -97,6 +97,8 @@ const DEFAULT_SETTINGS: Settings = {
   ambientEnabled: true,
   musicVolume: 0.5,
   sfxVolume: 0.5,
+  deepseekApiKey: '',
+  aiInterpretEnabled: false,
 }
 
 function makeDailyTasks(): DailyTask[] {
@@ -145,6 +147,8 @@ interface GameState {
   totalAnswered: number
   totalCorrect: number
   studyDays: string[] // ISO date strings
+  // AI 解读缓存：questionId -> 解读文本
+  aiInterpretCache: Record<string, string>
   // Actions
   answer: (questionId: string, isCorrect: boolean, quality: number, timeSpentMs: number) => {
     coinsGain: number
@@ -163,6 +167,7 @@ interface GameState {
   passNode: (nodeId: string, perfect: boolean) => void
   claimDailyTask: (taskId: string) => { coins: number }
   buyItem: (cost: number, useDiamonds?: boolean) => boolean
+  setAiInterpret: (questionId: string, text: string) => void
   resetAll: () => void
   exportData: () => string
   importData: (json: string) => boolean
@@ -195,6 +200,7 @@ export const useGameStore = create<GameState>()(
       totalAnswered: 0,
       totalCorrect: 0,
       studyDays: [],
+      aiInterpretCache: {},
 
       answer: (questionId, isCorrect, quality, timeSpentMs) => {
         const state = get()
@@ -444,6 +450,11 @@ export const useGameStore = create<GameState>()(
         return true
       },
 
+      setAiInterpret: (questionId, text) => {
+        const aiInterpretCache = { ...get().aiInterpretCache, [questionId]: text }
+        set({ aiInterpretCache })
+      },
+
       resetAll: () => {
         set({
           userId: 'astro-' + Math.random().toString(36).slice(2, 10),
@@ -468,6 +479,7 @@ export const useGameStore = create<GameState>()(
           totalAnswered: 0,
           totalCorrect: 0,
           studyDays: [],
+          aiInterpretCache: {},
         })
       },
 

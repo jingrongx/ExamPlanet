@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="80%">
+      <stop offset="0%" stop-color="#2d1b69"/>
+      <stop offset="50%" stop-color="#0a0e27"/>
+      <stop offset="100%" stop-color="#050818"/>
+    </radialGradient>
+    <radialGradient id="planet" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ff5fa0"/>
+      <stop offset="60%" stop-color="#ff2e88"/>
+      <stop offset="100%" stop-color="#9d4edd"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00f5ff"/>
+      <stop offset="50%" stop-color="#ffd700"/>
+      <stop offset="100%" stop-color="#ff2e88"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- 背景 -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- 星星 -->
+  <g fill="#ffffff" opacity="0.8">
+    <circle cx="180" cy="200" r="3"/>
+    <circle cx="820" cy="180" r="2.5"/>
+    <circle cx="150" cy="700" r="2"/>
+    <circle cx="870" cy="760" r="3"/>
+    <circle cx="220" cy="850" r="2"/>
+    <circle cx="780" cy="240" r="2"/>
+    <circle cx="100" cy="450" r="2.5"/>
+    <circle cx="920" cy="500" r="2"/>
+    <circle cx="300" cy="120" r="1.5"/>
+    <circle cx="700" cy="880" r="2"/>
+  </g>
+  <!-- 行星环 -->
+  <ellipse cx="512" cy="512" rx="380" ry="110" fill="none" stroke="url(#ring)" stroke-width="14" opacity="0.85" transform="rotate(-20 512 512)" filter="url(#glow)"/>
+  <ellipse cx="512" cy="512" rx="380" ry="110" fill="none" stroke="#00f5ff" stroke-width="3" opacity="0.4" transform="rotate(-20 512 512)"/>
+  <!-- 星球本体 -->
+  <circle cx="512" cy="512" r="220" fill="url(#planet)" filter="url(#glow)"/>
+  <!-- 星球高光 -->
+  <ellipse cx="460" cy="440" rx="80" ry="50" fill="#ffffff" opacity="0.25"/>
+  <!-- 星球纹理 -->
+  <path d="M 380 540 Q 450 560 520 545 Q 590 530 640 555" stroke="#9d4edd" stroke-width="4" fill="none" opacity="0.6"/>
+  <path d="M 400 600 Q 480 615 560 600" stroke="#ff2e88" stroke-width="3" fill="none" opacity="0.5"/>
+  <!-- 轨道卫星 -->
+  <circle cx="780" cy="380" r="14" fill="#00f5ff" filter="url(#glow)"/>
+  <circle cx="780" cy="380" r="6" fill="#ffffff"/>
+</svg>

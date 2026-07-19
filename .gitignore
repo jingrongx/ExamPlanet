@@ -1,0 +1,54 @@
+# ===== Node / 前端 =====
+node_modules/
+dist/
+dist-ssr/
+*.local
+.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# ===== 构建产物 =====
+build/
+*.tsbuildinfo
+
+# ===== Android / Gradle =====
+android/.gradle/
+android/app/build/
+android/captcha-cordova-android-plugins/build/
+android/capacitor-cordova-android-plugins/build/
+android/build/
+android/local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.iml
+captures/
+.cxx/
+
+# ===== IDE / 编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ===== 日志与临时 =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.cache/
+.temp/
+tmp/
+
+# ===== 环境变量与密钥 =====
+.env
+.env.*
+!.env.example
+
+# ===== Android 签名密钥 =====
+*.keystore
+*.jks
+keystore.properties

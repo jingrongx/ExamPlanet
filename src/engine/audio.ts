@@ -186,23 +186,84 @@ export function stopAmbient() {
   }
 }
 
-// TTS 朗读
+// TTS 朗读（Android WebView 兼容版）
+// - voices 异步加载：首次调用时若没拿到中文 voice 会等 onvoiceschanged
+// - Android WebView 上 speechSynthesis.speak 必须在用户交互后触发
+//   （由调用方在 onClick 等回调里调用 speak 即可满足）
+// - 失败时通过 onError 回调让 UI 提示
 let currentUtterance: SpeechSynthesisUtterance | null = null
 
-export function speak(text: string, opts: { rate?: number; pitch?: number } = {}) {
-  if (!('speechSynthesis' in window)) return
-  if (currentUtterance) {
-    window.speechSynthesis.cancel()
-  }
-  const u = new SpeechSynthesisUtterance(text)
-  u.lang = 'zh-CN'
-  u.rate = opts.rate ?? 1
-  u.pitch = opts.pitch ?? 1
+function tryLoadVoices(): SpeechSynthesisVoice[] {
+  if (!('speechSynthesis' in window)) return []
   const voices = window.speechSynthesis.getVoices()
-  const zhVoice = voices.find((v) => v.lang.startsWith('zh'))
-  if (zhVoice) u.voice = zhVoice
-  currentUtterance = u
-  window.speechSynthesis.speak(u)
+  return voices || []
+}
+
+// 监听 voices 加载完成（Chrome/WebView 异步触发）
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  try {
+    window.speechSynthesis.onvoiceschanged = () => {
+      tryLoadVoices()
+    }
+    // 主动尝试一次
+    tryLoadVoices()
+  } catch { /* ignore */ }
+}
+
+export interface SpeakOptions {
+  rate?: number
+  pitch?: number
+  onError?: (msg: string) => void
+  onStart?: () => void
+}
+
+export function speak(text: string, opts: SpeakOptions = {}) {
+  if (!('speechSynthesis' in window)) {
+    opts.onError?.('当前设备不支持语音朗读（Web Speech API 不可用）')
+    return
+  }
+  try {
+    if (currentUtterance) {
+      window.speechSynthesis.cancel()
+    }
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'zh-CN'
+    u.rate = opts.rate ?? 1
+    u.pitch = opts.pitch ?? 1
+
+    // 拿中文语音（兼容 zh-CN / zh_CN / cmn 等）
+    const voices = tryLoadVoices()
+    const zhVoice = voices.find((v) =>
+      v.lang.toLowerCase().startsWith('zh') ||
+      v.lang.toLowerCase().includes('cmn'),
+    )
+    if (zhVoice) u.voice = zhVoice
+
+    u.onstart = () => opts.onStart?.()
+    u.onerror = (e) => {
+      const errType = (e as any)?.error || 'unknown'
+      let msg = '语音朗读失败'
+      if (errType === 'not-allowed') msg = '语音朗读被系统拦截，请检查系统 TTS 引擎'
+      else if (errType === 'no-speech') msg = '未检测到可用的语音引擎'
+      else if (errType === 'synthesis-failed') msg = '语音合成失败，可能缺少中文 TTS 引擎'
+      opts.onError?.(msg)
+      console.error('[tts] error:', errType)
+    }
+
+    currentUtterance = u
+    // Android WebView 偶发不发声：先 cancel 再 speak 更稳
+    window.speechSynthesis.cancel()
+    // 短延迟确保 cancel 完成
+    setTimeout(() => {
+      try {
+        window.speechSynthesis.speak(u)
+      } catch (err) {
+        opts.onError?.(`语音朗读异常：${(err as Error).message}`)
+      }
+    }, 50)
+  } catch (err) {
+    opts.onError?.(`语音朗读初始化失败：${(err as Error).message}`)
+  }
 }
 
 export function stopSpeak() {
@@ -214,4 +275,18 @@ export function stopSpeak() {
 
 export function isSpeaking() {
   return 'speechSynthesis' in window && window.speechSynthesis.speaking
+}
+
+// 检测 TTS 是否可用（用于 UI 提示）
+export function isTtsSupported(): boolean {
+  return typeof window !== 'undefined' && 'speechSynthesis' in window
+}
+
+// 检测是否有中文语音引擎
+export function hasZhVoice(): boolean {
+  const voices = tryLoadVoices()
+  return voices.some((v) =>
+    v.lang.toLowerCase().startsWith('zh') ||
+    v.lang.toLowerCase().includes('cmn'),
+  )
 }

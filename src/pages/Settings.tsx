@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { useState, useRef } from 'react'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
-import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume } from '../engine/audio'
+import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume, isTtsSupported, hasZhVoice } from '../engine/audio'
 import { testApiKey } from '../services/ai'
 
 export function Settings() {
@@ -78,12 +78,22 @@ export function Settings() {
   }
 
   const testTTS = () => {
-    if (settings.ttsEnabled) {
-      speak('考证星球，祝你考试顺利通过')
-      toast('TTS 测试中...', 'info')
-    } else {
+    if (!settings.ttsEnabled) {
       toast('请先开启语音朗读', 'info')
+      return
     }
+    if (!isTtsSupported()) {
+      toast('当前设备不支持语音朗读', 'error')
+      return
+    }
+    if (!hasZhVoice()) {
+      toast('⚠️ 未检测到中文语音引擎，请在系统设置→语言和输入→文字转语音输出中安装中文 TTS', 'error')
+      return
+    }
+    speak('考证星球，祝你考试顺利通过', {
+      onStart: () => toast('开始朗读', 'success'),
+      onError: (msg) => toast(msg, 'error'),
+    })
   }
 
   const saveApiKey = () => {
@@ -137,10 +147,30 @@ export function Settings() {
           />
           <ToggleRow
             label="语音朗读 (TTS)"
-            desc="朗读题目和解析（需浏览器支持）"
+            desc="朗读题目和解析（依赖系统中文 TTS 引擎）"
             value={settings.ttsEnabled}
-            onChange={(v) => { toggle('ttsEnabled', v); if (v) speak('已开启语音朗读') }}
+            onChange={(v) => {
+              toggle('ttsEnabled', v)
+              if (v) {
+                if (!isTtsSupported()) {
+                  toast('当前设备不支持语音朗读', 'error')
+                  return
+                }
+                if (!hasZhVoice()) {
+                  toast('⚠️ 系统未安装中文 TTS 引擎，请到系统设置→文字转语音输出中安装', 'error')
+                  return
+                }
+                speak('已开启语音朗读', {
+                  onError: (msg) => toast(msg, 'error'),
+                })
+              }
+            }}
           />
+          {settings.ttsEnabled && !hasZhVoice() && (
+            <div className="px-4 pb-3 text-[10px] text-neon-red/80 leading-relaxed">
+              ⚠️ 当前未检测到中文语音引擎。请到「系统设置 → 语言和输入法 → 文字转语音输出」中安装/启用中文 TTS（如 Google 文字转语音引擎、华为/小米自带 TTS）。
+            </div>
+          )}
           <div className="p-4">
             <div className="flex justify-between mb-2">
               <span className="text-sm text-stardust/80">音效音量</span>
@@ -244,7 +274,10 @@ export function Settings() {
             <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleFileImport} className="hidden" />
           </div>
           <div className="text-[10px] text-stardust/40 leading-relaxed">
-            💡 数据存储在浏览器本地，清除浏览器数据会丢失进度，请定期导出备份。
+            💡 数据已通过原生 SharedPreferences 持久化，覆盖安装不会丢失。
+          </div>
+          <div className="text-[10px] text-neon-red/70 leading-relaxed">
+            ⚠️ <b>卸载应用会清空所有数据</b>（含进度、金币、错题、API Key）。卸载前请务必点击「导出存档」备份为 JSON 文件，重装后再「导入存档」恢复。
           </div>
         </GlassCard>
       </section>

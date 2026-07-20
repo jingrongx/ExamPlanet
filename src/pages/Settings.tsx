@@ -1,10 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
+import { UpdateModal } from '../components/ui/UpdateModal'
 import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume, isTtsSupported, hasZhVoice } from '../engine/audio'
 import { testApiKey } from '../services/ai'
+import { checkForUpdate, getCurrentVersion, type UpdateInfo } from '../services/updater'
 
 export function Settings() {
   const navigate = useNavigate()
@@ -21,6 +23,42 @@ export function Settings() {
   const apiKeyInputRef = useRef<HTMLInputElement>(null)
   // 获取输入框当前值（从 DOM 读取，不依赖 React state）
   const getApiKeyInput = () => (apiKeyInputRef.current?.value || '').trim()
+
+  // 自动更新
+  const [appVersion, setAppVersion] = useState('...')
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [showUpdate, setShowUpdate] = useState(false)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+
+  // 进入设置页读取当前版本号
+  useEffect(() => {
+    getCurrentVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('未知'))
+  }, [])
+
+  const handleCheckUpdate = async () => {
+    playButton()
+    setCheckingUpdate(true)
+    setUpdateInfo(null)
+    setShowUpdate(true)
+    try {
+      const info = await checkForUpdate()
+      if (!info) {
+        toast('检查更新失败，请检查网络后重试', 'error')
+        setShowUpdate(false)
+        return
+      }
+      setUpdateInfo(info)
+      if (!info.hasUpdate) {
+        toast(`已是最新版本 v${info.currentVersion}`, 'success')
+        setShowUpdate(false)
+      }
+    } catch (err) {
+      toast(`检查更新失败：${(err as Error).message}`, 'error')
+      setShowUpdate(false)
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
 
   const toggle = (key: keyof typeof settings, value: boolean) => {
     playButton()
@@ -304,7 +342,7 @@ export function Settings() {
         <GlassCard className="p-4 text-center">
           <div className="text-4xl mb-2">🪐</div>
           <div className="font-display font-bold text-lg neon-text-cyan">考证星球</div>
-          <div className="text-[10px] text-stardust/50 font-mono mt-1">CERT · PLANET · v1.0.0</div>
+          <div className="text-[10px] text-stardust/50 font-mono mt-1">CERT · PLANET · v{appVersion}</div>
           <p className="text-xs text-stardust/60 mt-3 leading-relaxed">
             太空赛博朋克风格的考证刷题 APP，支持飞行执照、无人机、无线电、中级经济师，融合 SM-2 间隔重复、游戏化激励、3D 模拟与多感官记忆。
           </p>
@@ -312,6 +350,19 @@ export function Settings() {
             {['React 18', 'Three.js', 'Zustand', 'Tailwind', 'Vite'].map((t) => (
               <span key={t} className="text-[9px] px-2 py-0.5 rounded-full glass text-stardust/60">{t}</span>
             ))}
+          </div>
+          <div className="mt-4 pt-3 border-t border-white/5">
+            <NeonButton
+              variant="secondary"
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+              className="w-full text-xs"
+            >
+              {checkingUpdate ? '🔄 检查中…' : '🛰️ 检查更新'}
+            </NeonButton>
+            <div className="text-[10px] text-stardust/40 mt-1.5 leading-relaxed">
+              启动时会自动检测新版本，也可手动点击检查。下载通过 ghproxy 加速。
+            </div>
           </div>
         </GlassCard>
       </section>
@@ -346,6 +397,14 @@ export function Settings() {
           </div>
         </div>
       </Modal>
+
+      {/* 更新提示 */}
+      <UpdateModal
+        open={showUpdate}
+        onClose={() => setShowUpdate(false)}
+        info={updateInfo}
+        checking={checkingUpdate}
+      />
     </div>
   )
 }

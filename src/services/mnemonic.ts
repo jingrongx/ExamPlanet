@@ -112,7 +112,7 @@ ${optionsBlock}
         ],
         stream: false,
         temperature: 0.8,
-        max_tokens: 700,
+        max_tokens: 1500,
       }),
       signal,
     })
@@ -126,14 +126,36 @@ ${optionsBlock}
       if (resp.status === 401) errMsg = '⚠️ API Key 无效或已过期，请到「设置」重新填写 DeepSeek API Key。'
       else if (resp.status === 429) errMsg = '⚠️ 请求过于频繁或额度已用尽，请稍后再试。'
       else errMsg = `⚠️ 口诀生成失败：${msg}`
+      console.error('[mnemonic] HTTP error:', resp.status, msg)
     } else {
       const data = await resp.json()
-      fullText = data?.choices?.[0]?.message?.content || ''
-      if (!fullText) errMsg = '⚠️ AI 未返回内容，请稍后重试。'
+      const choice = data?.choices?.[0]
+      const msg0 = choice?.message
+      // DeepSeek 偶尔会把内容放在 reasoning_content；content 可能返回 null/空字符串
+      const content: string = msg0?.content ?? ''
+      const reasoning: string = msg0?.reasoning_content ?? ''
+      const finishReason: string = choice?.finish_reason ?? ''
+      console.error('[mnemonic] response meta:', JSON.stringify({
+        hasContent: !!content,
+        contentLen: content.length,
+        hasReasoning: !!reasoning,
+        reasoningLen: reasoning.length,
+        finishReason,
+        model: data?.model,
+        usage: data?.usage,
+      }))
+      fullText = content || reasoning || ''
+      if (!fullText) {
+        console.error('[mnemonic] empty content, raw data:', JSON.stringify(data).slice(0, 800))
+        errMsg = finishReason === 'length'
+          ? '⚠️ 输出长度超限被截断，请稍后重试。'
+          : '⚠️ AI 未返回内容，请稍后重试。'
+      }
     }
   } catch (err) {
     if ((err as Error).name === 'AbortError') return
     errMsg = `⚠️ 网络请求失败：${(err as Error).message}`
+    console.error('[mnemonic] fetch error:', err)
   }
 
   if (errMsg) {

@@ -14,15 +14,13 @@ export function Settings() {
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
-  const [apiKeyInput, setApiKeyInput] = useState(settings.deepseekApiKey || '')
   const [showApiKey, setShowApiKey] = useState(false)
   const [testing, setTesting] = useState(false)
-
-  // 注意：不要用 useEffect 把 settings.deepseekApiKey 同步回 apiKeyInput！
-  // 之前有 useEffect 会在 settings 变化时 setApiKeyInput(settings.deepseekApiKey || '')，
-  // 但用户输入过程中如果触发任何 store 更新（如 persist 写回），useEffect 会用 store 里的
-  // 旧值覆盖用户正在输入的内容，导致输入框被清空，保存时 apiKeyInput 为空字符串。
-  // 导入存档/重置场景下组件会重新挂载，useState 初始化就能拿到最新值，不需要 useEffect。
+  // 用 ref + defaultValue 代替受控组件，避免 Android WebView 输入法合成事件
+  // 导致 React onChange 收不到完整输入的问题（之前用户输入完整 key 但 state 只捕获到 1 字符）
+  const apiKeyInputRef = useRef<HTMLInputElement>(null)
+  // 获取输入框当前值（从 DOM 读取，不依赖 React state）
+  const getApiKeyInput = () => (apiKeyInputRef.current?.value || '').trim()
 
   const toggle = (key: keyof typeof settings, value: boolean) => {
     playButton()
@@ -90,7 +88,7 @@ export function Settings() {
 
   const saveApiKey = () => {
     playButton()
-    const trimmed = apiKeyInput.trim()
+    const trimmed = getApiKeyInput()
     if (!trimmed) {
       toast('API Key 不能为空', 'info')
       return
@@ -100,15 +98,16 @@ export function Settings() {
   }
 
   const handleTestApi = async () => {
-    if (!apiKeyInput.trim()) {
+    const trimmed = getApiKeyInput()
+    if (!trimmed) {
       toast('请先填写 API Key', 'info')
       return
     }
     setTesting(true)
     toast('正在测试连接...', 'info')
     // 先保存最新值再测试
-    updateSettings({ deepseekApiKey: apiKeyInput.trim() })
-    const result = await testApiKey(apiKeyInput.trim())
+    updateSettings({ deepseekApiKey: trimmed })
+    const result = await testApiKey(trimmed)
     setTesting(false)
     toast(result.message, result.ok ? 'success' : 'error')
   }
@@ -193,9 +192,9 @@ export function Settings() {
                 </button>
               </div>
               <input
+                ref={apiKeyInputRef}
                 type={showApiKey ? 'text' : 'password'}
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
+                defaultValue={settings.deepseekApiKey || ''}
                 placeholder="sk-xxxxxxxxxxxx"
                 autoComplete="off"
                 autoCorrect="off"

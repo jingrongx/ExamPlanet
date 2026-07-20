@@ -105,6 +105,48 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [checked])
 
+  // app 进入后台/被划掉时，主动同步存档到磁盘
+  // zustand persist 的 setItem 是异步的，用户快速划掉 app 时可能没写完
+  // 这里在 pause 事件触发时，手动把最新的 state 写入 SharedPreferences(commit) + Documents
+  useEffect(() => {
+    const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
+    if (!isNative) return
+    let listener: { remove: () => Promise<void> } | null = null
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { App: CapApp } = await import('@capacitor/app')
+        const l = await CapApp.addListener('pause', async () => {
+          try {
+            const { useGameStore } = await import('./store/useGameStore')
+            const { getPlugin } = await import('./store/preferencesStorage')
+            const plugin = getPlugin()
+            if (!plugin) return
+            // 手动把最新的 state 写入磁盘（plugin.write 会同步 commit SharedPreferences）
+            const state = useGameStore.getState()
+            // 删除 actions 之类的函数字段，只保留数据
+            const persistable = { ...state }
+            const json = JSON.stringify({ state: persistable, version: 0 })
+            await plugin.write({ value: json })
+          } catch (err) {
+            console.error('[app] pause flush failed:', err)
+          }
+        })
+        if (!cancelled) {
+          listener = l
+        } else {
+          l.remove()
+        }
+      } catch (err) {
+        console.warn('[app] pause listener failed:', err)
+      }
+    })()
+    return () => {
+      cancelled = true
+      listener?.remove()
+    }
+  }, [])
+
   return (
     <ToastProvider>
       <GlobalErrorBoundary>

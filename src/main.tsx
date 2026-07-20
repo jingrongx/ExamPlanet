@@ -51,8 +51,9 @@ async function bootstrap() {
   // 动态加载 store，确保权限流程已完成
   const { useGameStore } = await import('./store/useGameStore')
   try {
+    console.error('[bootstrap] before rehydrate, userId:', useGameStore.getState().userId)
     await useGameStore.persist.rehydrate()
-    console.error('[bootstrap] rehydrate done')
+    console.error('[bootstrap] after rehydrate, userId:', useGameStore.getState().userId)
   } catch (e) {
     console.error('[bootstrap] rehydrate failed:', e)
   }

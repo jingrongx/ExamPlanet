@@ -2,13 +2,12 @@
 //
 // 目标：卸载 app 重装也不丢数据，全自动保存，用户无感知
 //
-// 存储层级（按优先级）：
-// 1. 自定义 Capacitor 插件 PersistentStorage：写公共 Documents 目录
-//    /storage/emulated/0/Documents/cert-planet/cert-planet-save.json
-//    Android 11+ 用 MediaStore API（无需权限，卸载不丢）
-//    Android 10- 用 File API（需 WRITE_EXTERNAL_STORAGE 权限，maxSdkVersion=29）
-// 2. @capacitor/preferences (SharedPreferences)：应用专属存储，卸载会丢，作为备份
-// 3. localStorage：Web 开发环境降级
+// 存储层级（由 PersistentStoragePlugin 管理）：
+// 1. SharedPreferences（commit 同步写入）：app 被划掉/杀死时数据不丢
+// 2. Documents 文件（MediaStore/File API）：app 卸载重装数据不丢
+//
+// plugin.write 会先同步写入 SharedPreferences(commit)，再写入 Documents
+// plugin.read 会优先读 Documents，读不到读 SharedPreferences
 //
 // 为什么用 skipHydration + 手动 rehydrate？
 // zustand persist 的异步 storage 存在 hydrate 竞态：store 创建时返回 DEFAULT 值，
@@ -16,8 +15,7 @@
 // 解决：skipHydration: true 跳过自动 hydrate，在 main.tsx 中 await rehydrate()
 // 完成后再渲染 React，确保不会有 set 在 hydrate 之前发生。
 //
-// 旧版本迁移：之前用 localStorage 或 Preferences 存档，升级到新版本后 Documents 文件可能为空。
-// 首次读不到时尝试从 Preferences/localStorage 迁移，并写入 Documents。
+// 旧版本迁移：之前用 Capacitor Preferences 存档，升级到新版本后需要迁移到新存储。
 
 import { Preferences } from '@capacitor/preferences'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -28,17 +26,15 @@ const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
 interface PersistentStoragePlugin {
   read(): Promise<{ value?: string } | null>
   write(options: { value: string }): Promise<void>
+  flush(): Promise<void>
   requestStoragePermission(): Promise<{ granted: boolean }>
 }
 
-// 缓存插件实例，避免每次都走 Capacitor.registerPlugin
 let pluginCache: PersistentStoragePlugin | null = null
-function getPlugin(): PersistentStoragePlugin | null {
+export function getPlugin(): PersistentStoragePlugin | null {
   if (!isNative) return null
   if (pluginCache) return pluginCache
   try {
-    // registerPlugin 在 Web 环境会返回 proxy，调用时才会失败
-    // 在原生环境且插件未注册时也会返回 proxy，调用时抛错
     pluginCache = registerPlugin<PersistentStoragePlugin>('PersistentStorage')
     return pluginCache
   } catch (err) {
@@ -47,12 +43,11 @@ function getPlugin(): PersistentStoragePlugin | null {
   }
 }
 
-// 内存缓存：避免每次 getItem 都走原生 IPC（性能优化）
+// 内存缓存：避免每次 getItem 都走原生 IPC
 let memoryCache: { key: string; value: string | null } | null = null
 const migratedKeys = new Set<string>()
 
 // 权限就绪 Promise：main.tsx 中 requestStoragePermission 完成后 resolve
-// getItem/setItem 会 await 这个 Promise，确保权限授权后再读写 Documents
 let permissionResolve: ((v: boolean) => void) | null = null
 const permissionPromise: Promise<boolean> = new Promise((resolve) => {
   permissionResolve = resolve
@@ -64,96 +59,89 @@ export function setPermissionReady(v: boolean) {
   }
 }
 
-async function readFromDocuments(name: string): Promise<string | null> {
-  // 优先用内存缓存
+async function readFromNative(name: string): Promise<string | null> {
+  console.error('[storage] getItem called, name:', name)
   if (memoryCache && memoryCache.key === name) {
+    console.error('[storage] return from memoryCache:', memoryCache.value?.length, 'chars')
     return memoryCache.value
   }
-  // 等待权限流程完成（main.tsx 启动时触发）
-  // 如果权限被拒绝，permissionPromise 返回 false，跳过 Documents 读取
   const granted = await permissionPromise
   if (!granted) {
-    console.error('[storage] permission denied, skip readFromDocuments')
+    console.error('[storage] permission denied, skip read')
     return null
   }
   const plugin = getPlugin()
-  if (!plugin) return null
+  if (!plugin) {
+    console.error('[storage] plugin not available')
+    return null
+  }
 
   try {
     const result = await plugin.read()
     const value = result?.value ?? null
-    memoryCache = { key: name, value }
-    if (value) return value
+    console.error('[storage] plugin.read returned:', value?.length, 'chars')
+    if (value) {
+      memoryCache = { key: name, value }
+      return value
+    }
 
-    // Documents 没有数据，尝试从旧存储迁移（localStorage / Preferences）
+    // 新存储没有数据，尝试从旧版本 Capacitor Preferences 迁移
     if (!migratedKeys.has(name)) {
       migratedKeys.add(name)
       try {
-        const legacy = localStorage.getItem(name)
-        if (legacy) {
-          console.error('[storage] migrating from localStorage to Documents:', name, 'len:', legacy.length)
-          await plugin.write({ value: legacy })
-          localStorage.removeItem(name)
-          memoryCache = { key: name, value: legacy }
-          return legacy
-        }
-      } catch { /* ignore */ }
-      try {
         const { value: prefValue } = await Preferences.get({ key: name })
         if (prefValue) {
-          console.error('[storage] migrating from Preferences to Documents:', name, 'len:', prefValue.length)
+          console.error('[storage] migrating from Capacitor Preferences:', name, 'len:', prefValue.length)
           await plugin.write({ value: prefValue })
-          await Preferences.remove({ key: name })
           memoryCache = { key: name, value: prefValue }
           return prefValue
         }
       } catch { /* ignore */ }
     }
+    memoryCache = { key: name, value: null }
     return null
   } catch (err) {
-    console.error('[storage] readFromDocuments failed:', err)
+    console.error('[storage] read failed:', err)
     return null
   }
 }
 
-async function writeToDocuments(name: string, value: string): Promise<void> {
+async function writeToNative(name: string, value: string): Promise<void> {
+  // 立即更新内存缓存（即使磁盘写入失败，本次会话内仍能读到最新值）
   memoryCache = { key: name, value }
-  // 等待权限流程完成（不阻塞写入，权限拒绝时降级到 Preferences）
   const granted = await permissionPromise
   if (!granted) {
-    console.error('[storage] permission denied, skip writeToDocuments')
-    try {
-      await Preferences.set({ key: name, value })
-    } catch { /* ignore */ }
+    console.error('[storage] permission denied, skip write')
     return
   }
   const plugin = getPlugin()
   if (!plugin) return
   try {
+    // plugin.write 会先同步写入 SharedPreferences(commit)，再写入 Documents
+    // commit() 是同步的，返回时数据已经写入磁盘，app 被杀死也不会丢
     await plugin.write({ value })
   } catch (err) {
-    console.error('[storage] writeToDocuments failed:', err)
+    console.error('[storage] write failed:', err)
   }
-  // 同时备份到 Preferences（双写，Documents 万一失败也能恢复）
+}
+
+// 供 App.tsx 在 app 进入后台时调用，确保最新数据写入磁盘
+export async function flushStorage(): Promise<void> {
+  if (!isNative) return
+  const plugin = getPlugin()
+  if (!plugin) return
   try {
-    await Preferences.set({ key: name, value })
-  } catch { /* ignore */ }
+    await plugin.flush()
+  } catch (err) {
+    console.error('[storage] flush failed:', err)
+  }
 }
 
 export const preferencesStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (isNative) {
-      const v = await readFromDocuments(name)
-      if (v !== null) return v
-      // Documents 读不到且迁移也失败，降级到 Preferences
-      try {
-        const { value } = await Preferences.get({ key: name })
-        return value
-      } catch {
-        return null
-      }
+      return await readFromNative(name)
     }
-    // Web 环境
     try {
       return localStorage.getItem(name)
     } catch {
@@ -162,7 +150,7 @@ export const preferencesStorage: StateStorage = {
   },
   setItem: async (name: string, value: string): Promise<void> => {
     if (isNative) {
-      await writeToDocuments(name, value)
+      await writeToNative(name, value)
       return
     }
     try {
@@ -174,12 +162,17 @@ export const preferencesStorage: StateStorage = {
   removeItem: async (name: string): Promise<void> => {
     memoryCache = null
     if (isNative) {
-      // Documents 不支持删除，写入空字符串标记
-      // 实际上 zustand persist 只在 resetAll 时调用 removeItem，
-      // 此时 store 已经用 DEFAULT 值覆盖，Documents 会被写入 DEFAULT 值
+      // 写入空对象标记删除（plugin.write 会同步写入 SharedPreferences）
+      try {
+        const plugin = getPlugin()
+        if (plugin) {
+          await plugin.write({ value: '{}' })
+        }
+      } catch { /* ignore */ }
       try {
         await Preferences.remove({ key: name })
       } catch { /* ignore */ }
+      return
     }
     try {
       localStorage.removeItem(name)

@@ -510,9 +510,8 @@ export const useGameStore = create<GameState>()(
     }),
     {
       name: 'cert-planet-save',
-      // 用 @capacitor/preferences (Android SharedPreferences) 作为持久化存储
-      // localStorage 在部分 Android WebView 下关闭 app 后会被清空，
-      // SharedPreferences 持久化到应用专属目录，覆盖安装不丢失
+      // createJSONStorage 会自动 JSON.parse getItem 返回的字符串
+      // 然后 zustand persist 取 .state 传给 merge 函数
       storage: createJSONStorage(() => preferencesStorage),
       // 关键：跳过自动 hydrate，在 main.tsx 中手动 await rehydrate()
       // 避免 hydrate 竞态：store 创建时返回 DEFAULT 值，React 组件在 hydrate
@@ -520,21 +519,29 @@ export const useGameStore = create<GameState>()(
       skipHydration: true,
       // 深合并：避免旧存档的 settings 对象整体覆盖 DEFAULT_SETTINGS，
       // 导致新加的 deepseekApiKey/aiInterpretEnabled 字段丢失为 undefined
+      // 注意：createJSONStorage 已经 JSON.parse 了存储内容，
+      // zustand persist 的 hydrate 取 .state 后传给 merge，
+      // 所以 persisted 参数已经是 state 对象本身（不是字符串）
       merge: (persisted, current) => {
+        console.error('[merge] called, persisted:', persisted, 'current.userId:', current.userId)
         if (!persisted) return current
         try {
-          const persistedState = JSON.parse(persisted as string)
+          // persisted 已经是 state 对象（createJSONStorage 已 JSON.parse）
+          const persistedState = persisted as object
           // 对 settings 做浅合并，保留新增字段的默认值
           const mergedSettings = {
             ...current.settings,
-            ...(persistedState.settings || {}),
+            ...((persistedState as any).settings || {}),
           }
-          return {
+          const result = {
             ...current,
             ...persistedState,
             settings: mergedSettings,
           }
-        } catch {
+          console.error('[merge] result.userId:', (result as any).userId, 'coins:', (result as any).coins)
+          return result
+        } catch (e) {
+          console.error('[merge] error:', e)
           return current
         }
       },

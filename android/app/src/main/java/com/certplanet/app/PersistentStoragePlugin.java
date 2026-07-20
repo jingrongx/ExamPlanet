@@ -5,6 +5,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -28,17 +29,16 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 
 /**
- * 持久化存储插件：把存档 JSON 写到公共 Documents 目录，卸载重装不丢数据。
+ * 持久化存储插件：双层存储保证数据不丢
  *
- * 实现方案：
- * - Android 11 (API 30) 及以上：用 MediaStore API 写公共 Documents 目录
- *   无需任何权限，app 卸载后文件保留，重装后通过 MediaStore 查询自动恢复
- * - Android 10 (API 29) 及以下：用 File API 直接写 Environment.DIRECTORY_DOCUMENTS
- *   需 WRITE_EXTERNAL_STORAGE 运行时权限
- *   权限请求由 MainActivity.onCreate 主动触发（ActivityCompat.requestPermissions）
- *   本插件只负责读写，不负责请求权限
+ * 1. SharedPreferences（commit 同步写入）：app 被划掉/杀死时数据不丢
+ * 2. Documents 文件（MediaStore/File API）：app 卸载重装数据不丢
+ *
+ * 读取顺序：Documents → SharedPreferences
+ * 写入顺序：SharedPreferences(commit) → Documents
  *
  * 文件路径：/storage/emulated/0/Documents/cert-planet/cert-planet-save.json
+ * SharedPreferences：cert-planet-backup.xml
  */
 @CapacitorPlugin(
     name = "PersistentStorage",
@@ -57,20 +57,18 @@ public class PersistentStoragePlugin extends Plugin {
     private static final String DIR_NAME = "cert-planet";
     private static final String FILE_NAME = "cert-planet-save.json";
     private static final String TAG = "PersistentStorage";
+    private static final String PREFS_NAME = "cert-planet-backup";
+    private static final String PREFS_KEY = "value";
 
     /**
-     * 检查存储权限状态（不请求权限）
-     * 权限请求由 MainActivity.onCreate 处理
-     * JS 端通过循环调用此方法等待用户授权
+     * 检查存储权限状态（不请求权限，权限由 MainActivity 处理）
      */
     @PluginMethod
     public void requestStoragePermission(PluginCall call) {
         JSObject ret = new JSObject();
-        // Android 11+ 不需要权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             ret.put("granted", true);
         } else {
-            // Android 10- 检查权限是否已授权
             ret.put("granted", hasStoragePermission());
         }
         call.resolve(ret);
@@ -78,20 +76,23 @@ public class PersistentStoragePlugin extends Plugin {
 
     /**
      * 读取存档：
-     * - Android 10+：优先用 MediaStore（无需权限，重装后也能读）
-     * - 降级用 File API（需要权限，Android 10 重装后可能读不到）
+     * 1. 优先读 Documents（卸载重装后能恢复）
+     * 2. Documents 读不到，读 SharedPreferences（app 被杀死后能恢复）
      */
     @PluginMethod
     public void read(PluginCall call) {
         try {
             String content = null;
-            // Android 10+ 用 MediaStore 读取（无需权限）
+            // 1. 优先读 Documents
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 content = readViaMediaStore();
             }
-            // MediaStore 读不到或老版本，降级用 File API
             if (content == null) {
                 content = readViaFile();
+            }
+            // 2. Documents 读不到，读 SharedPreferences
+            if (content == null) {
+                content = readViaPrefs();
             }
             if (content != null) {
                 JSObject ret = new JSObject();
@@ -107,9 +108,12 @@ public class PersistentStoragePlugin extends Plugin {
     }
 
     /**
-     * 写入存档：Android 11+ 用 MediaStore，Android 10- 用 File API
-     * Android 10- 需要 WRITE_EXTERNAL_STORAGE 权限
-     * 如果没权限会 reject，JS 端降级到 Preferences 备份
+     * 写入存档：
+     * 1. 先同步写入 SharedPreferences(commit)，保证 app 被划掉/杀死时数据不丢
+     * 2. 再写入 Documents，保证 app 卸载重装数据不丢
+     *
+     * commit() 是同步的，会阻塞当前线程直到写入磁盘完成
+     * 这确保了即使 app 在 write 返回前被杀死，SharedPreferences 也已经写入磁盘
      */
     @PluginMethod
     public void write(PluginCall call) {
@@ -119,27 +123,28 @@ public class PersistentStoragePlugin extends Plugin {
             return;
         }
         try {
-            // Android 11+ 直接用 MediaStore（无需权限）
+            // 1. 同步写入 SharedPreferences（commit，保证 app 被杀死时数据不丢）
+            boolean prefsOk = writeViaPrefs(value);
+            if (!prefsOk) {
+                android.util.Log.w(TAG, "writeViaPrefs failed");
+            }
+
+            // 2. 写入 Documents（保证卸载重装数据不丢）
+            boolean docsOk = false;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                boolean ok = writeViaMediaStore(value);
-                if (ok) {
-                    call.resolve();
-                } else {
-                    call.reject("write failed");
-                }
-                return;
+                docsOk = writeViaMediaStore(value);
+            } else if (hasStoragePermission()) {
+                docsOk = writeViaFile(value);
             }
-            // Android 10- 检查 WRITE_EXTERNAL_STORAGE 权限
-            if (!hasStoragePermission()) {
-                android.util.Log.w(TAG, "write rejected: no storage permission");
-                call.reject("permission denied");
-                return;
+            if (!docsOk) {
+                android.util.Log.w(TAG, "writeViaDocuments failed, but SharedPreferences already saved");
             }
-            boolean ok = writeViaFile(value);
-            if (ok) {
+
+            // 只要 SharedPreferences 写入成功就认为成功（Documents 失败不影响 app 运行）
+            if (prefsOk) {
                 call.resolve();
             } else {
-                call.reject("write failed");
+                call.reject("write failed: SharedPreferences commit failed");
             }
         } catch (Exception e) {
             android.util.Log.w(TAG, "write failed", e);
@@ -148,14 +153,70 @@ public class PersistentStoragePlugin extends Plugin {
     }
 
     /**
-     * 检查是否有外部存储写入权限
+     * 强制同步存档：app 进入后台时调用，确保最新数据写入磁盘
+     * 读取最新的存档值并重新写入 SharedPreferences 和 Documents
      */
+    @PluginMethod
+    public void flush(PluginCall call) {
+        try {
+            // 读取最新的存档值
+            String content = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                content = readViaMediaStore();
+            }
+            if (content == null) {
+                content = readViaFile();
+            }
+            if (content == null) {
+                content = readViaPrefs();
+            }
+            if (content != null) {
+                // 重新写入，确保磁盘数据是最新的
+                writeViaPrefs(content);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    writeViaMediaStore(content);
+                } else if (hasStoragePermission()) {
+                    writeViaFile(content);
+                }
+            }
+            call.resolve();
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "flush failed", e);
+            call.reject("flush failed: " + e.getMessage());
+        }
+    }
+
     private boolean hasStoragePermission() {
         return ContextCompat.checkSelfPermission(getContext(),
                 Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
     }
 
-    // ============ MediaStore 方案（Android 11+） ============
+    // ============ SharedPreferences 方案（同步 commit，app 被杀死时数据不丢） ============
+
+    private String readViaPrefs() {
+        try {
+            SharedPreferences prefs = getContext()
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            return prefs.getString(PREFS_KEY, null);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "readViaPrefs failed", e);
+            return null;
+        }
+    }
+
+    private boolean writeViaPrefs(String value) {
+        try {
+            SharedPreferences prefs = getContext()
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            // commit() 同步写入磁盘，保证 app 被杀死时数据不丢
+            return prefs.edit().putString(PREFS_KEY, value).commit();
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "writeViaPrefs failed", e);
+            return false;
+        }
+    }
+
+    // ============ MediaStore 方案（Android 11+，卸载重装数据不丢） ============
 
     private String readViaMediaStore() {
         try {
@@ -202,7 +263,6 @@ public class PersistentStoragePlugin extends Plugin {
             ContentResolver resolver = c.getContentResolver();
             Uri collection = MediaStore.Files.getContentUri("external");
 
-            // 先查询是否已有该文件，有则删除（MediaStore 不支持直接覆盖）
             String selection = MediaStore.Files.FileColumns.RELATIVE_PATH + " LIKE ? AND "
                     + MediaStore.Files.FileColumns.DISPLAY_NAME + " = ?";
             String[] selectionArgs = new String[]{
@@ -227,7 +287,6 @@ public class PersistentStoragePlugin extends Plugin {
                 }
             }
 
-            // 插入新文件
             ContentValues values = new ContentValues();
             values.put(MediaStore.Files.FileColumns.DISPLAY_NAME, FILE_NAME);
             values.put(MediaStore.Files.FileColumns.MIME_TYPE, "application/json");

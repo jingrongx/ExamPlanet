@@ -113,6 +113,9 @@ ${optionsBlock}
         stream: false,
         temperature: 0.8,
         max_tokens: 1500,
+        // 关闭思考模式：DeepSeek V4-Flash 默认开启思考，会把思考过程放到 reasoning_content
+        // 关闭后直接返回最终口诀到 content，避免思考过程被当作口诀输出
+        thinking: { type: 'disabled' },
       }),
       signal,
     })
@@ -131,20 +134,20 @@ ${optionsBlock}
       const data = await resp.json()
       const choice = data?.choices?.[0]
       const msg0 = choice?.message
-      // DeepSeek 偶尔会把内容放在 reasoning_content；content 可能返回 null/空字符串
+      // 只取 content（最终答案）；不再回退 reasoning_content，
+      // 因为 reasoning_content 是思考过程，不是口诀本身
       const content: string = msg0?.content ?? ''
-      const reasoning: string = msg0?.reasoning_content ?? ''
       const finishReason: string = choice?.finish_reason ?? ''
       console.error('[mnemonic] response meta:', JSON.stringify({
         hasContent: !!content,
         contentLen: content.length,
-        hasReasoning: !!reasoning,
-        reasoningLen: reasoning.length,
+        hasReasoning: !!msg0?.reasoning_content,
+        reasoningLen: msg0?.reasoning_content?.length ?? 0,
         finishReason,
         model: data?.model,
         usage: data?.usage,
       }))
-      fullText = content || reasoning || ''
+      fullText = content
       if (!fullText) {
         console.error('[mnemonic] empty content, raw data:', JSON.stringify(data).slice(0, 800))
         errMsg = finishReason === 'length'

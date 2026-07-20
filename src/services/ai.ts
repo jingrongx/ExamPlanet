@@ -101,6 +101,9 @@ ${optionsBlock}
         stream: false,
         temperature: 0.6,
         max_tokens: 900,
+        // 关闭思考模式：DeepSeek V4-Flash 默认开启思考，会把思考过程放到 reasoning_content
+        // 用户不需要看到思考过程，关闭后直接返回最终答案到 content
+        thinking: { type: 'disabled' },
       }),
       signal,
     })
@@ -179,6 +182,7 @@ export async function testApiKey(apiKey: string): Promise<{ ok: boolean; message
         messages: [{ role: 'user', content: '你好，请回复「ok」' }],
         max_tokens: 8,
         stream: false,
+        thinking: { type: 'disabled' },
       }),
     })
     if (resp.ok) {

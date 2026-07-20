@@ -550,3 +550,9 @@ export function getStubbornMistakes(): MistakeCard[] {
   const mistakes = useGameStore.getState().mistakes
   return Object.values(mistakes).filter((m) => m.level === 3 && !m.mastered)
 }
+
+// 订阅 store 变化，把存档同步到 Preferences 备份（debounce 1 秒）
+// 这样即使 localStorage 在某些 Android WebView 下关闭即清空，
+// 下次启动也能从 Preferences 恢复
+import { syncToBackup } from './persistBackup'
+useGameStore.subscribe(() => syncToBackup())

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
+import { restoreFromBackup } from './store/persistBackup'
 
 // 隐藏启动闪屏（由 App 组件 useEffect 调用，确保 React 渲染完成后才隐藏）
 export function hideBoot() {
@@ -13,13 +14,24 @@ export function hideBoot() {
   }
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>,
-)
+// 启动入口：先从 Preferences 备份恢复存档到 localStorage，再渲染 React
+// 这样可以兜底 localStorage 在部分 Android WebView 下关闭即清空的问题
+async function bootstrap() {
+  try {
+    await restoreFromBackup()
+  } catch (e) {
+    console.error('[bootstrap] restoreFromBackup failed:', e)
+  }
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </React.StrictMode>,
+  )
+}
+
+bootstrap()
 
 // 移动端：禁止双击缩放、长按选中等默认行为
 if (typeof window !== 'undefined') {

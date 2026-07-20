@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { preferencesStorage } from './preferencesStorage'
 import type {
   AnswerLog,
   MistakeCard,
@@ -509,12 +510,14 @@ export const useGameStore = create<GameState>()(
     }),
     {
       name: 'cert-planet-save',
-      // 注意：之前尝试过用 @capacitor/preferences (SharedPreferences) 替代 localStorage，
-      // 但 zustand persist 的异步 storage 会在 hydrate 完成前用 DEFAULT 值覆盖存档，
-      // 导致用户退出 app 后数据全部丢失。已回退到 localStorage。
-      // localStorage 在 Android WebView 中存储于 app_webview/Local Storage/，
-      // 覆盖安装不会丢失；卸载会清除（Android 系统默认行为）。
-      storage: createJSONStorage(() => localStorage),
+      // 用 @capacitor/preferences (Android SharedPreferences) 作为持久化存储
+      // localStorage 在部分 Android WebView 下关闭 app 后会被清空，
+      // SharedPreferences 持久化到应用专属目录，覆盖安装不丢失
+      storage: createJSONStorage(() => preferencesStorage),
+      // 关键：跳过自动 hydrate，在 main.tsx 中手动 await rehydrate()
+      // 避免 hydrate 竞态：store 创建时返回 DEFAULT 值，React 组件在 hydrate
+      // 完成前触发 set 会把 DEFAULT 值写回 storage，覆盖真实存档
+      skipHydration: true,
       // 深合并：避免旧存档的 settings 对象整体覆盖 DEFAULT_SETTINGS，
       // 导致新加的 deepseekApiKey/aiInterpretEnabled 字段丢失为 undefined
       merge: (persisted, current) => {
@@ -550,9 +553,3 @@ export function getStubbornMistakes(): MistakeCard[] {
   const mistakes = useGameStore.getState().mistakes
   return Object.values(mistakes).filter((m) => m.level === 3 && !m.mastered)
 }
-
-// 订阅 store 变化，把存档同步到 Preferences 备份（debounce 1 秒）
-// 这样即使 localStorage 在某些 Android WebView 下关闭即清空，
-// 下次启动也能从 Preferences 恢复
-import { syncToBackup } from './persistBackup'
-useGameStore.subscribe(() => syncToBackup())

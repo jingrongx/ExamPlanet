@@ -1,9 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import App from './App'
 import './index.css'
-import { restoreFromBackup } from './store/persistBackup'
+import { useGameStore } from './store/useGameStore'
 
 // 隐藏启动闪屏（由 App 组件 useEffect 调用，确保 React 渲染完成后才隐藏）
 export function hideBoot() {
@@ -14,14 +13,22 @@ export function hideBoot() {
   }
 }
 
-// 启动入口：先从 Preferences 备份恢复存档到 localStorage，再渲染 React
-// 这样可以兜底 localStorage 在部分 Android WebView 下关闭即清空的问题
+// 启动入口：先 await store 完成 hydrate（从 Preferences 读取存档），再动态导入 App 并渲染
+//
+// 为什么这样设计？
+// 1. useGameStore 用了 skipHydration: true，store 创建时不会自动 hydrate
+// 2. 必须手动调用 rehydrate() 从 Preferences 异步读取存档
+// 3. 必须在 React 渲染前完成 hydrate，否则 React 组件 useEffect 里的 set
+//    会把 DEFAULT 值写回 storage，覆盖真实存档（这是之前丢失数据的根因）
+// 4. App 用动态 import，确保 useGameStore 模块在 hydrate 完成后才被加载
 async function bootstrap() {
   try {
-    await restoreFromBackup()
+    await useGameStore.persist.rehydrate()
+    console.error('[bootstrap] rehydrate done')
   } catch (e) {
-    console.error('[bootstrap] restoreFromBackup failed:', e)
+    console.error('[bootstrap] rehydrate failed:', e)
   }
+  const [{ default: App }] = await Promise.all([import('./App')])
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <BrowserRouter>

@@ -10,7 +10,7 @@ import {
 } from '../engine/audio'
 import { CoinBurst, ComboFlash, CritFlash, WrongShake, CorrectGlow, RankUpBanner } from '../components/effects/Effects'
 import { streamInterpretQuestion } from '../services/ai'
-import { streamMnemonic } from '../services/mnemonic'
+import { MnemonicCard } from '../components/ui/MnemonicCard'
 import type { Question } from '../types'
 
 // 判断是否多选题：type === 'multi' 或 answer 多于 1 个字母
@@ -33,7 +33,7 @@ export function Quiz() {
   const { id, nodeId } = useParams<{ id: string; nodeId: string }>()
   const navigate = useNavigate()
   const toast = useToast()
-  const { answer, settings, combo, passNode, aiInterpretCache, setAiInterpret, mnemonicCache, setMnemonic } = useGameStore()
+  const { answer, settings, combo, passNode, aiInterpretCache, setAiInterpret } = useGameStore()
 
   const license = id ? getLicense(id as any) : null
   const questions = useMemo<Question[]>(() => {
@@ -62,11 +62,6 @@ export function Quiz() {
   // 记录最近一次作答信息，供 AI 解读使用
   const lastAnswerRef = useRef<{ userLetters: string; correct: boolean }>({ userLetters: '', correct: false })
 
-  // AI 记忆口诀相关
-  const [mnemoText, setMnemoText] = useState('')
-  const [mnemoLoading, setMnemoLoading] = useState(false)
-  const mnemoAbortRef = useRef<AbortController | null>(null)
-
   const q = questions[idx]
   const multi = q ? isMultiChoice(q) : false
 
@@ -82,14 +77,6 @@ export function Quiz() {
     }
     const cached = q ? (aiInterpretCache[q.id] || '') : ''
     setAiText(cached)
-    // 同步重置记忆口诀状态
-    setMnemoLoading(false)
-    if (mnemoAbortRef.current) {
-      mnemoAbortRef.current.abort()
-      mnemoAbortRef.current = null
-    }
-    const cachedMnemo = q ? (mnemonicCache[q.id] || '') : ''
-    setMnemoText(cachedMnemo)
   }, [idx])
 
   // 组件卸载时取消 AI 请求
@@ -97,9 +84,6 @@ export function Quiz() {
     return () => {
       if (aiAbortRef.current) {
         aiAbortRef.current.abort()
-      }
-      if (mnemoAbortRef.current) {
-        mnemoAbortRef.current.abort()
       }
     }
   }, [])
@@ -156,56 +140,6 @@ export function Quiz() {
       setAiInterpret(question.id, accumulated)
     }
   }, [settings.aiInterpretEnabled, settings.deepseekApiKey, license?.name, aiInterpretCache, setAiInterpret])
-
-  // 触发 AI 记忆口诀生成（force=true 时强制重新生成，忽略缓存）
-  const triggerMnemonic = useCallback(async (question: Question, force: boolean = false) => {
-    if (!settings.deepseekApiKey) {
-      setMnemoText('⚠️ 未配置 DeepSeek API Key，请在「设置」中填写后再生成 AI 口诀。')
-      return
-    }
-    // 命中缓存且非强制刷新：直接展示缓存
-    if (!force) {
-      const cached = mnemonicCache[question.id]
-      if (cached) {
-        setMnemoText(cached)
-        return
-      }
-    }
-    // 取消上一个请求
-    if (mnemoAbortRef.current) mnemoAbortRef.current.abort()
-    const controller = new AbortController()
-    mnemoAbortRef.current = controller
-
-    setMnemoLoading(true)
-    setMnemoText('')
-    let firstChunk = true
-    let accumulated = ''
-    await streamMnemonic(
-      {
-        question: question.question,
-        options: question.options,
-        answer: question.answer,
-        explanation: question.explanation,
-        type: isMultiChoice(question) ? 'multi' : 'single',
-        licenseName: license?.name,
-      },
-      settings.deepseekApiKey,
-      (chunk) => {
-        if (firstChunk) {
-          setMnemoLoading(false)
-          firstChunk = false
-        }
-        accumulated += chunk
-        setMnemoText(accumulated)
-      },
-      controller.signal,
-    )
-    if (firstChunk) setMnemoLoading(false)
-    // 完成后保存到缓存（仅当有内容且非错误提示）
-    if (accumulated && !accumulated.startsWith('⚠️')) {
-      setMnemonic(question.id, accumulated)
-    }
-  }, [settings.deepseekApiKey, license?.name, mnemonicCache, setMnemonic])
 
   const commitAnswer = useCallback((opts: string[]) => {
     if (!q || opts.length === 0) return
@@ -281,10 +215,6 @@ export function Quiz() {
     if (aiAbortRef.current) {
       aiAbortRef.current.abort()
       aiAbortRef.current = null
-    }
-    if (mnemoAbortRef.current) {
-      mnemoAbortRef.current.abort()
-      mnemoAbortRef.current = null
     }
     if (idx + 1 >= questions.length) {
       // 完成
@@ -486,95 +416,14 @@ export function Quiz() {
                       </div>
                       <p className="text-sm text-stardust/80 leading-relaxed">{q?.explanation}</p>
                     </GlassCard>
-                    <div className="glass p-4 rounded-2xl" style={{ borderLeft: '2px solid #ffd700' }}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm">🧠</span>
-                          <span className="font-tech font-bold text-sm neon-text-gold">记忆口诀 · AI</span>
-                          {mnemoText && !mnemoLoading && !mnemoText.startsWith('⚠️') && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-neon-gold/15 text-neon-gold/80">
-                              {mnemonicCache[q?.id || ''] ? '已缓存' : '已生成'}
-                            </span>
-                          )}
-                        </div>
-                        {mnemoLoading && (
-                          <span className="text-[10px] text-stardust/50 animate-pulse">编口中…</span>
-                        )}
-                      </div>
-
-                      {/* 状态分支：加载中 / 有文本 / 空闲 */}
-                      {mnemoLoading && !mnemoText ? (
-                        <div className="flex items-center gap-1.5 text-xs text-stardust/50">
-                          <motion.span
-                            animate={{ opacity: [0.3, 1, 0.3] }}
-                            transition={{ duration: 1.2, repeat: Infinity }}
-                          >
-                            正在为你编口诀…
-                          </motion.span>
-                        </div>
-                      ) : mnemoText ? (
-                        <>
-                          <div className="text-sm text-stardust/85 leading-relaxed whitespace-pre-wrap break-words">
-                            {renderMnemonicText(mnemoText)}
-                          </div>
-                          {/* 重新生成按钮 */}
-                          {!mnemoLoading && !mnemoText.startsWith('⚠️') && (
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                onClick={() => {
-                                  playButton()
-                                  if (!q) return
-                                  triggerMnemonic(q, true)
-                                }}
-                                className="text-[11px] px-3 py-1.5 rounded-lg glass text-neon-gold hover:text-neon-cyan transition-colors"
-                              >
-                                🔄 重新生成
-                              </button>
-                            </div>
-                          )}
-                          {/* 错误提示重试 */}
-                          {!mnemoLoading && mnemoText.startsWith('⚠️') && (
-                            <div className="mt-3">
-                              <button
-                                onClick={() => {
-                                  playButton()
-                                  if (!q) return
-                                  triggerMnemonic(q, true)
-                                }}
-                                className="text-[11px] px-3 py-1.5 rounded-lg glass text-neon-cyan hover:text-neon-gold transition-colors"
-                              >
-                                🔁 重试
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-xs text-stardust/40 mb-2.5">
-                            {settings.deepseekApiKey
-                              ? '点击下方按钮让 AI 为本题编 4 段口诀（谐音 / 场景 / 押韵 / 公式，仅生成一次，自动缓存）'
-                              : '⚠️ 请先在「设置」中配置 DeepSeek API Key'}
-                          </div>
-                          {settings.deepseekApiKey && (
-                            <button
-                              onClick={() => {
-                                playButton()
-                                if (!q) return
-                                triggerMnemonic(q)
-                              }}
-                              className="text-xs px-3 py-2 rounded-xl font-tech font-bold"
-                              style={{
-                                background: 'rgba(255,215,0,0.12)',
-                                color: '#ffd700',
-                                border: '1px solid rgba(255,215,0,0.45)',
-                              }}
-                            >
-                              🧠 点击生成 AI 口诀
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
+                    {/* 记忆口诀卡片（与记忆工坊共用同一份缓存） */}
+                    {q && (
+                      <MnemonicCard
+                        key={q.id}
+                        question={q}
+                        licenseName={license?.name}
+                      />
+                    )}
 
                     {/* AI 解读 */}
                     {settings.aiInterpretEnabled && (
@@ -725,49 +574,6 @@ function renderAiText(text: string): JSX.Element {
       elements.push(
         <div key={`t-${i}`} className="mt-2 first:mt-0 font-tech font-bold text-xs" style={{ color }}>
           {title}
-        </div>,
-      )
-    } else {
-      const content = part.trim()
-      if (content) {
-        elements.push(
-          <p key={`p-${i}`} className="mt-1 text-sm text-stardust/85 leading-relaxed">
-            {content}
-          </p>,
-        )
-      }
-    }
-  })
-  if (elements.length === 0) {
-    return <>{text}</>
-  }
-  return <>{elements}</>
-}
-
-// 把 AI 返回的记忆口诀 4 段（## 谐音对照 / ## 场景动作 / ## 押韵口诀 / ## 关系公式）
-// 分段渲染，每段带 emoji 图标和主题色
-function renderMnemonicText(text: string): JSX.Element {
-  const parts = text.split(/(^## .+$)/m).filter(Boolean)
-  const elements: JSX.Element[] = []
-  // 4 段主题色与图标映射
-  const sectionMeta: Record<string, { icon: string; color: string }> = {
-    '谐音': { icon: '🔤', color: '#ff2e88' },
-    '场景': { icon: '🎬', color: '#00f5ff' },
-    '押韵': { icon: '🎵', color: '#9d4edd' },
-    '公式': { icon: '📐', color: '#ffd700' },
-    '关系': { icon: '📐', color: '#ffd700' },
-  }
-  parts.forEach((part, i) => {
-    if (part.startsWith('## ')) {
-      const title = part.slice(3).trim()
-      let meta = { icon: '✨', color: '#e0e0ff' }
-      for (const k of Object.keys(sectionMeta)) {
-        if (title.includes(k)) { meta = sectionMeta[k]; break }
-      }
-      elements.push(
-        <div key={`t-${i}`} className="mt-3 first:mt-0 flex items-center gap-1.5 font-tech font-bold text-xs" style={{ color: meta.color }}>
-          <span>{meta.icon}</span>
-          <span>{title}</span>
         </div>,
       )
     } else {

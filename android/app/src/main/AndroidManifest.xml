@@ -38,4 +38,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 外部存储写入：用于把存档写到公共 Documents 目录，卸载重装不丢数据 -->
+    <!-- Android 10 (API 29) 及以下需要此权限；Android 11+ 使用 Scoped Storage 不需要 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 </manifest>

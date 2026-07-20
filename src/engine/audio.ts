@@ -232,11 +232,25 @@ export interface SpeakOptions {
 // 原生 TTS：调用 Capacitor 插件
 async function speakNative(text: string, opts: SpeakOptions): Promise<void> {
   try {
+    console.error('[tts] speakNative start, text len:', text.length)
     // 先停止上一个朗读
     await TextToSpeech.stop().catch(() => { /* ignore */ })
 
+    // 检查中文是否被支持（如果失败也继续，让 speak 自己报错）
+    try {
+      const { supported } = await TextToSpeech.isLanguageSupported({ lang: 'zh-CN' })
+      console.error('[tts] isLanguageSupported zh-CN:', supported)
+      if (!supported) {
+        opts.onError?.('系统 TTS 引擎不支持中文，请到「设置 → 文字转语音输出」切换或安装中文 TTS 引擎（如讯飞、华为、Google TTS）')
+        return
+      }
+    } catch (e) {
+      console.error('[tts] isLanguageSupported failed:', e)
+    }
+
     opts.onStart?.()
 
+    console.error('[tts] calling speak...')
     await TextToSpeech.speak({
       text,
       lang: 'zh-CN',
@@ -244,8 +258,10 @@ async function speakNative(text: string, opts: SpeakOptions): Promise<void> {
       pitch: opts.pitch ?? 1.0,
       volume: 1.0,
     })
+    console.error('[tts] speak promise resolved')
   } catch (err) {
     const msg = (err as Error)?.message || String(err)
+    console.error('[tts] speak rejected:', msg)
     if (msg.includes('not installed') || msg.includes('no engine')) {
       opts.onError?.('系统未安装中文 TTS 引擎，请到「系统设置 → 文字转语音输出」中安装')
     } else if (msg.includes('language') || msg.includes('locale')) {
@@ -253,7 +269,6 @@ async function speakNative(text: string, opts: SpeakOptions): Promise<void> {
     } else {
       opts.onError?.(`语音朗读失败：${msg}`)
     }
-    console.error('[tts native] error:', err)
   }
 }
 

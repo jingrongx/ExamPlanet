@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { prefStorage, migrateLegacyIfNeeded } from './prefStorage'
 import type {
   AnswerLog,
   MistakeCard,
@@ -510,9 +509,12 @@ export const useGameStore = create<GameState>()(
     }),
     {
       name: 'cert-planet-save',
-      // 用 Capacitor Preferences 持久化（原生 SharedPreferences），覆盖安装不会丢失
-      // 卸载时仍会清除，但配合 Android Auto Backup (allowBackup=true) 可自动备份恢复
-      storage: createJSONStorage(() => prefStorage),
+      // 注意：之前尝试过用 @capacitor/preferences (SharedPreferences) 替代 localStorage，
+      // 但 zustand persist 的异步 storage 会在 hydrate 完成前用 DEFAULT 值覆盖存档，
+      // 导致用户退出 app 后数据全部丢失。已回退到 localStorage。
+      // localStorage 在 Android WebView 中存储于 app_webview/Local Storage/，
+      // 覆盖安装不会丢失；卸载会清除（Android 系统默认行为）。
+      storage: createJSONStorage(() => localStorage),
       // 深合并：避免旧存档的 settings 对象整体覆盖 DEFAULT_SETTINGS，
       // 导致新加的 deepseekApiKey/aiInterpretEnabled 字段丢失为 undefined
       merge: (persisted, current) => {
@@ -536,9 +538,6 @@ export const useGameStore = create<GameState>()(
     },
   ),
 )
-
-// 升级时把旧的 localStorage 存档迁移到 Preferences（原生环境执行一次）
-migrateLegacyIfNeeded('cert-planet-save').catch(() => { /* 忽略 */ })
 
 // 获取到期错题
 export function getDueMistakes(): MistakeCard[] {

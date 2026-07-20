@@ -10,7 +10,8 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     captureInput: true,
     // 启用 WebView 硬件加速，保障 Three.js 3D 性能
-    webContentsDebuggingEnabled: false,
+    // 临时开启 WebView 调试，用于排查 API Key 保存问题
+    webContentsDebuggingEnabled: true,
   },
   plugins: {
     SplashScreen: {

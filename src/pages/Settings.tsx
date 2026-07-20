@@ -90,7 +90,33 @@ export function Settings() {
 
   const saveApiKey = () => {
     playButton()
-    updateSettings({ deepseekApiKey: apiKeyInput.trim() })
+    const trimmed = apiKeyInput.trim()
+    console.log('[DEBUG saveApiKey] before save:', {
+      apiKeyInput: trimmed,
+      apiKeyInputLength: trimmed.length,
+      apiKeyInputPrefix: trimmed.slice(0, 8) + '...',
+      storeApiKeyBefore: settings.deepseekApiKey,
+      storeApiKeyBeforeLength: (settings.deepseekApiKey || '').length,
+    })
+    updateSettings({ deepseekApiKey: trimmed })
+    // 异步读取 store 和 localStorage 验证是否真的写入
+    setTimeout(() => {
+      const afterStore = useGameStore.getState().settings.deepseekApiKey
+      const rawLs = localStorage.getItem('cert-planet-save')
+      let lsApiKey: string | null = null
+      try {
+        const parsed = rawLs ? JSON.parse(rawLs) : null
+        lsApiKey = parsed?.state?.settings?.deepseekApiKey ?? null
+      } catch { /* ignore */ }
+      console.log('[DEBUG saveApiKey] after save:', {
+        storeApiKeyAfter: afterStore,
+        storeApiKeyAfterLength: (afterStore || '').length,
+        storeApiKeyAfterPrefix: (afterStore || '').slice(0, 8) + '...',
+        lsApiKey,
+        lsApiKeyLength: (lsApiKey || '').length,
+        lsRawLength: rawLs?.length || 0,
+      })
+    }, 300)
     toast('API Key 已保存', 'success')
   }
 

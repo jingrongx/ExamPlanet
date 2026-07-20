@@ -90,6 +90,18 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
+      - name: Verify APK signature
+        run: |
+          APK=$(find android -name "*release*.apk" -type f 2>/dev/null | head -1)
+          echo "Verifying: $APK"
+          # 用 Android SDK 自带的 apksigner 验证签名
+          APKSIGNER="$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | tail -1)/apksigner"
+          "$APKSIGNER" verify --verbose "$APK" || {
+            echo "::error::APK signature verification failed! APK is not signed, will cause '解析包错误' on install."
+            exit 1
+          }
+          echo "✓ APK signature verified"
+
       - name: Locate built APK and rename
         id: apk
         run: |

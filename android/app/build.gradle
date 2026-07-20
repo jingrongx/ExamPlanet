@@ -1,12 +1,16 @@
 apply plugin: 'com.android.application'
 
-// 读取签名配置：优先从环境变量（CI），其次从本地 keystore.properties（开发机）
+// 读取签名配置：优先从 CI 环境变量，其次从本地 keystore.properties（开发机）
 def keystoreProps = new Properties()
 def keystorePropsFile = rootProject.file("keystore.properties")
 if (keystorePropsFile.exists()) {
     keystoreProps.load(new FileInputStream(keystorePropsFile))
 }
-def hasKeystoreEnv = System.getenv("ANDROID_KEYSTORE_BASE64") != null
+// CI 标志：ci-release.keystore 文件存在 且 ANDROID_KEYSTORE_PASSWORD 环境变量已设置
+// 注意：不能用 ANDROID_KEYSTORE_BASE64 判断，因为它只在 Decode 步骤设置，
+// Build 步骤里没有该变量，会导致 signingConfig 不生效，APK 无签名。
+def ciKeystoreFile = rootProject.file("ci-release.keystore")
+def hasCiKeystore = ciKeystoreFile.exists() && System.getenv("ANDROID_KEYSTORE_PASSWORD") != null
 
 android {
     namespace = "com.certplanet.app"
@@ -27,9 +31,9 @@ android {
     }
     signingConfigs {
         release {
-            if (hasKeystoreEnv) {
-                // CI 环境：从环境变量读取
-                storeFile file("../ci-release.keystore")
+            if (hasCiKeystore) {
+                // CI 环境：用解码出的 keystore + 环境变量密码
+                storeFile ciKeystoreFile
                 storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias System.getenv("ANDROID_KEY_ALIAS")
                 keyPassword System.getenv("ANDROID_KEY_PASSWORD")
@@ -46,7 +50,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (hasKeystoreEnv || keystoreProps['storeFile'] != null) {
+            if (hasCiKeystore || keystoreProps['storeFile'] != null) {
                 signingConfig signingConfigs.release
             }
         }

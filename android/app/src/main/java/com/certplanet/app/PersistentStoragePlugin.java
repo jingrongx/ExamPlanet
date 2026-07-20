@@ -1,20 +1,23 @@
 package com.certplanet.app;
 
+import android.Manifest;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-
-import org.json.JSONException;
+import com.getcapacitor.annotation.Permission;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -28,30 +31,65 @@ import java.io.OutputStream;
  * 持久化存储插件：把存档 JSON 写到公共 Documents 目录，卸载重装不丢数据。
  *
  * 实现方案：
- * - Android 10 (API 29) 及以下：用 File API 直接写 Environment.DIRECTORY_DOCUMENTS
- *   （需 WRITE_EXTERNAL_STORAGE 权限，已在 AndroidManifest 声明 maxSdkVersion=29）
  * - Android 11 (API 30) 及以上：用 MediaStore API 写公共 Documents 目录
- *   （无需权限，app 卸载后文件保留，重装后通过 MediaStore 查询读取）
+ *   无需任何权限，app 卸载后文件保留，重装后通过 MediaStore 查询自动恢复
+ * - Android 10 (API 29) 及以下：用 File API 直接写 Environment.DIRECTORY_DOCUMENTS
+ *   需 WRITE_EXTERNAL_STORAGE 运行时权限
+ *   权限请求由 MainActivity.onCreate 主动触发（ActivityCompat.requestPermissions）
+ *   本插件只负责读写，不负责请求权限
  *
  * 文件路径：/storage/emulated/0/Documents/cert-planet/cert-planet-save.json
  */
-@CapacitorPlugin(name = "PersistentStorage")
+@CapacitorPlugin(
+    name = "PersistentStorage",
+    permissions = {
+        @Permission(
+            alias = "storage",
+            strings = {
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+        )
+    }
+)
 public class PersistentStoragePlugin extends Plugin {
 
     private static final String DIR_NAME = "cert-planet";
     private static final String FILE_NAME = "cert-planet-save.json";
+    private static final String TAG = "PersistentStorage";
 
     /**
-     * 读取存档：优先用 MediaStore（Android 11+），降级用 File API（Android 10-）
+     * 检查存储权限状态（不请求权限）
+     * 权限请求由 MainActivity.onCreate 处理
+     * JS 端通过循环调用此方法等待用户授权
+     */
+    @PluginMethod
+    public void requestStoragePermission(PluginCall call) {
+        JSObject ret = new JSObject();
+        // Android 11+ 不需要权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            ret.put("granted", true);
+        } else {
+            // Android 10- 检查权限是否已授权
+            ret.put("granted", hasStoragePermission());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 读取存档：
+     * - Android 10+：优先用 MediaStore（无需权限，重装后也能读）
+     * - 降级用 File API（需要权限，Android 10 重装后可能读不到）
      */
     @PluginMethod
     public void read(PluginCall call) {
         try {
             String content = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 10+ 用 MediaStore 读取（无需权限）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 content = readViaMediaStore();
             }
-            // MediaStore 读不到或 Android 10-，降级用 File API
+            // MediaStore 读不到或老版本，降级用 File API
             if (content == null) {
                 content = readViaFile();
             }
@@ -63,12 +101,15 @@ public class PersistentStoragePlugin extends Plugin {
                 call.resolve(new JSObject());
             }
         } catch (Exception e) {
+            android.util.Log.w(TAG, "read failed", e);
             call.reject("read failed: " + e.getMessage());
         }
     }
 
     /**
      * 写入存档：Android 11+ 用 MediaStore，Android 10- 用 File API
+     * Android 10- 需要 WRITE_EXTERNAL_STORAGE 权限
+     * 如果没权限会 reject，JS 端降级到 Preferences 备份
      */
     @PluginMethod
     public void write(PluginCall call) {
@@ -78,20 +119,40 @@ public class PersistentStoragePlugin extends Plugin {
             return;
         }
         try {
-            boolean ok;
+            // Android 11+ 直接用 MediaStore（无需权限）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                ok = writeViaMediaStore(value);
-            } else {
-                ok = writeViaFile(value);
+                boolean ok = writeViaMediaStore(value);
+                if (ok) {
+                    call.resolve();
+                } else {
+                    call.reject("write failed");
+                }
+                return;
             }
+            // Android 10- 检查 WRITE_EXTERNAL_STORAGE 权限
+            if (!hasStoragePermission()) {
+                android.util.Log.w(TAG, "write rejected: no storage permission");
+                call.reject("permission denied");
+                return;
+            }
+            boolean ok = writeViaFile(value);
             if (ok) {
                 call.resolve();
             } else {
                 call.reject("write failed");
             }
         } catch (Exception e) {
+            android.util.Log.w(TAG, "write failed", e);
             call.reject("write failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * 检查是否有外部存储写入权限
+     */
+    private boolean hasStoragePermission() {
+        return ContextCompat.checkSelfPermission(getContext(),
+                Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
     }
 
     // ============ MediaStore 方案（Android 11+） ============
@@ -101,7 +162,6 @@ public class PersistentStoragePlugin extends Plugin {
             Context c = getContext();
             ContentResolver resolver = c.getContentResolver();
             Uri collection = MediaStore.Files.getContentUri("external");
-            // 查询 app 自己创建的 cert-planet-save.json
             String selection = MediaStore.Files.FileColumns.RELATIVE_PATH + " LIKE ? AND "
                     + MediaStore.Files.FileColumns.DISPLAY_NAME + " = ?";
             String[] selectionArgs = new String[]{
@@ -131,7 +191,7 @@ public class PersistentStoragePlugin extends Plugin {
             }
             return null;
         } catch (Exception e) {
-            android.util.Log.w("PersistentStorage", "readViaMediaStore failed", e);
+            android.util.Log.w(TAG, "readViaMediaStore failed", e);
             return null;
         }
     }
@@ -157,11 +217,10 @@ public class PersistentStoragePlugin extends Plugin {
                         if (idCol >= 0) {
                             long id = cursor.getLong(idCol);
                             Uri uri = android.content.ContentUris.withAppendedId(collection, id);
-                            // 先尝试删除旧文件
                             try {
                                 resolver.delete(uri, null, null);
                             } catch (Exception e) {
-                                android.util.Log.w("PersistentStorage", "delete old failed", e);
+                                android.util.Log.w(TAG, "delete old failed", e);
                             }
                         }
                     }
@@ -185,7 +244,7 @@ public class PersistentStoragePlugin extends Plugin {
             }
             return true;
         } catch (Exception e) {
-            android.util.Log.w("PersistentStorage", "writeViaMediaStore failed", e);
+            android.util.Log.w(TAG, "writeViaMediaStore failed", e);
             return false;
         }
     }
@@ -210,7 +269,7 @@ public class PersistentStoragePlugin extends Plugin {
             }
             return sb.toString();
         } catch (Exception e) {
-            android.util.Log.w("PersistentStorage", "readViaFile failed", e);
+            android.util.Log.w(TAG, "readViaFile failed", e);
             return null;
         }
     }
@@ -220,6 +279,7 @@ public class PersistentStoragePlugin extends Plugin {
             File dir = new File(Environment.getExternalStoragePublicDirectory(
                     Environment.DIRECTORY_DOCUMENTS), DIR_NAME);
             if (!dir.exists() && !dir.mkdirs()) {
+                android.util.Log.w(TAG, "mkdirs failed: " + dir.getAbsolutePath());
                 return false;
             }
             File file = new File(dir, FILE_NAME);
@@ -227,9 +287,10 @@ public class PersistentStoragePlugin extends Plugin {
                 fos.write(value.getBytes("UTF-8"));
                 fos.flush();
             }
+            android.util.Log.i(TAG, "writeViaFile ok: " + file.getAbsolutePath());
             return true;
         } catch (Exception e) {
-            android.util.Log.w("PersistentStorage", "writeViaFile failed", e);
+            android.util.Log.w(TAG, "writeViaFile failed", e);
             return false;
         }
     }

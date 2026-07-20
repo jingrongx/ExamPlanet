@@ -2,7 +2,6 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
-import { useGameStore } from './store/useGameStore'
 
 // 隐藏启动闪屏（由 App 组件 useEffect 调用，确保 React 渲染完成后才隐藏）
 export function hideBoot() {
@@ -13,15 +12,44 @@ export function hideBoot() {
   }
 }
 
-// 启动入口：先 await store 完成 hydrate（从 Preferences 读取存档），再动态导入 App 并渲染
+// 启动入口：
+// 1. MainActivity.onCreate 已主动用 ActivityCompat.requestPermissions 请求权限
+// 2. JS 端循环检查权限状态，等待用户授权（最多 15 秒）
+// 3. 动态加载 useGameStore 模块（避免模块加载时就触发 read）
+// 4. await rehydrate() 从 Documents 文件恢复存档
+// 5. 动态加载 App 并渲染
 //
-// 为什么这样设计？
-// 1. useGameStore 用了 skipHydration: true，store 创建时不会自动 hydrate
-// 2. 必须手动调用 rehydrate() 从 Preferences 异步读取存档
-// 3. 必须在 React 渲染前完成 hydrate，否则 React 组件 useEffect 里的 set
-//    会把 DEFAULT 值写回 storage，覆盖真实存档（这是之前丢失数据的根因）
-// 4. App 用动态 import，确保 useGameStore 模块在 hydrate 完成后才被加载
+// 为什么要动态加载 useGameStore？
+// zustand persist 即使设置了 skipHydration: true，store 创建时仍会调用 storage.getItem
+// 预读存档。如果在权限授权前加载 store，Android 10 重装后 read 会因权限不足失败。
+// 所以必须先等权限授权，再加载 store 模块。
 async function bootstrap() {
+  const { Capacitor } = await import('@capacitor/core')
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { registerPlugin } = await import('@capacitor/core')
+      const plugin = registerPlugin<PersistentStoragePlugin>('PersistentStorage')
+      // 循环等待权限授权：MainActivity.onCreate 已经弹出权限对话框
+      // Android 11+ 立即返回 granted=true，循环退出
+      // Android 10- 每 500ms 检查一次，等用户点"允许"后退出，最多等 15 秒
+      const start = Date.now()
+      let granted = false
+      while (Date.now() - start < 15000) {
+        const result = await plugin.requestStoragePermission()
+        granted = result.granted === true
+        if (granted) break
+        await new Promise(r => setTimeout(r, 500))
+      }
+      console.error('[bootstrap] storage permission:', granted, 'after', Date.now() - start, 'ms')
+    } catch (e) {
+      console.error('[bootstrap] permission check failed:', e)
+    }
+  }
+  // 标记权限就绪，允许 preferencesStorage 读写 Documents
+  const { setPermissionReady } = await import('./store/preferencesStorage')
+  setPermissionReady(true)
+  // 动态加载 store，确保权限流程已完成
+  const { useGameStore } = await import('./store/useGameStore')
   try {
     await useGameStore.persist.rehydrate()
     console.error('[bootstrap] rehydrate done')
@@ -36,6 +64,11 @@ async function bootstrap() {
       </BrowserRouter>
     </React.StrictMode>,
   )
+}
+
+// PersistentStorage 插件类型（仅用于本文件内的 requestStoragePermission 调用）
+interface PersistentStoragePlugin {
+  requestStoragePermission(): Promise<{ granted: boolean }>
 }
 
 bootstrap()

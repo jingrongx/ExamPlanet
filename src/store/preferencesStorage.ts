@@ -28,6 +28,7 @@ const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
 interface PersistentStoragePlugin {
   read(): Promise<{ value?: string } | null>
   write(options: { value: string }): Promise<void>
+  requestStoragePermission(): Promise<{ granted: boolean }>
 }
 
 // 缓存插件实例，避免每次都走 Capacitor.registerPlugin
@@ -50,10 +51,30 @@ function getPlugin(): PersistentStoragePlugin | null {
 let memoryCache: { key: string; value: string | null } | null = null
 const migratedKeys = new Set<string>()
 
+// 权限就绪 Promise：main.tsx 中 requestStoragePermission 完成后 resolve
+// getItem/setItem 会 await 这个 Promise，确保权限授权后再读写 Documents
+let permissionResolve: ((v: boolean) => void) | null = null
+const permissionPromise: Promise<boolean> = new Promise((resolve) => {
+  permissionResolve = resolve
+})
+export function setPermissionReady(v: boolean) {
+  if (permissionResolve) {
+    permissionResolve(v)
+    permissionResolve = null
+  }
+}
+
 async function readFromDocuments(name: string): Promise<string | null> {
   // 优先用内存缓存
   if (memoryCache && memoryCache.key === name) {
     return memoryCache.value
+  }
+  // 等待权限流程完成（main.tsx 启动时触发）
+  // 如果权限被拒绝，permissionPromise 返回 false，跳过 Documents 读取
+  const granted = await permissionPromise
+  if (!granted) {
+    console.error('[storage] permission denied, skip readFromDocuments')
+    return null
   }
   const plugin = getPlugin()
   if (!plugin) return null
@@ -97,6 +118,15 @@ async function readFromDocuments(name: string): Promise<string | null> {
 
 async function writeToDocuments(name: string, value: string): Promise<void> {
   memoryCache = { key: name, value }
+  // 等待权限流程完成（不阻塞写入，权限拒绝时降级到 Preferences）
+  const granted = await permissionPromise
+  if (!granted) {
+    console.error('[storage] permission denied, skip writeToDocuments')
+    try {
+      await Preferences.set({ key: name, value })
+    } catch { /* ignore */ }
+    return
+  }
   const plugin = getPlugin()
   if (!plugin) return
   try {

@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 拿全部历史，用于生成 changelog
+          fetch-depth: 0  # 拿全部历史，用于生成 changelog 与版本递增
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -55,22 +55,45 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/ci-release.keystore
           ls -la android/ci-release.keystore
 
+      - name: Generate version info
+        id: ver
+        run: |
+          # 自定义 tag 输入优先
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            # 基于今日日期 + 当日推送序号自动生成
+            DATE=$(date +'%Y.%m.%d')
+            COUNT=$(git rev-list --count --since="$(date +'%Y-%m-%dT00:00:00')" HEAD || echo "1")
+            TAG="v${DATE}.${COUNT}"
+          fi
+          # 去掉可能的前缀 v，得到纯数字版本号
+          VERSION="${TAG#v}"
+          # versionCode：去掉点拼接，最多 9 位（如 20260720.1 -> 202607201）
+          VC=$(echo "$VERSION" | sed 's/\.//g')
+          # 截断到 9 位以内，防止超过 int 范围
+          VC=${VC:0:9}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "code=$VC" >> $GITHUB_OUTPUT
+          echo "Generated: tag=$TAG version=$VERSION code=$VC"
+
       - name: Build Release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          APP_VERSION_CODE: ${{ steps.ver.outputs.code }}
+          APP_VERSION_NAME: ${{ steps.ver.outputs.version }}
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Locate built APK
+      - name: Locate built APK and rename
         id: apk
         run: |
-          # 查找所有 apk 文件，挑选 release 相关的
-          echo "All APK files:"
-          find android -name "*.apk" -type f 2>/dev/null || true
+          # 查找 release apk
           APK=$(find android -name "*release*.apk" -type f 2>/dev/null | head -1)
           if [ -z "$APK" ]; then
             APK=$(find android -name "*.apk" -type f 2>/dev/null | head -1)
@@ -79,28 +102,18 @@ jobs:
             echo "::error::No APK found in build outputs"
             exit 1
           fi
-          # 拷贝到固定文件名方便后续步骤使用
-          cp "$APK" app-release.apk
-          echo "path=app-release.apk" >> $GITHUB_OUTPUT
+          # 重命名为 cert-planet-<version>.apk（纯英文，避免中文乱码）
+          APK_NAME="cert-planet-${{ steps.ver.outputs.version }}.apk"
+          cp "$APK" "$APK_NAME"
+          echo "path=$APK_NAME" >> $GITHUB_OUTPUT
           echo "Found APK: $APK"
+          echo "Renamed to: $APK_NAME"
 
       - name: Get current date
         id: date
         run: |
           echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
           echo "time=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
-
-      - name: Generate version tag
-        id: tag
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "name=${{ inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            # 自动生成：基于今日日期 + 当日推送序号
-            DATE=$(date +'%Y.%m.%d')
-            COUNT=$(git rev-list --count --since="$(date +'%Y-%m-%dT00:00:00')" HEAD || echo "1")
-            echo "name=v${DATE}.$COUNT" >> $GITHUB_OUTPUT
-          fi
 
       - name: Generate release notes from commits
         id: notes
@@ -115,9 +128,10 @@ jobs:
           fi
           # 写入文件，避免多行变量问题
           {
-            echo "## 📦 考证星球 ${{ steps.tag.outputs.name }}"
+            echo "## 📦 考证星球 ${{ steps.ver.outputs.tag }}"
             echo ""
             echo "**构建时间**: ${{ steps.date.outputs.time }}"
+            echo "**版本号**: ${{ steps.ver.outputs.version }} (code ${{ steps.ver.outputs.code }})"
             echo ""
             echo "### 📝 提交记录"
             echo ""
@@ -125,24 +139,24 @@ jobs:
             echo ""
             echo "### 📥 安装方式"
             echo ""
-            echo "下载下方 \`app-release.apk\`，手机开启「允许安装未知来源」后点击安装。"
+            echo "下载下方 \`cert-planet-${{ steps.ver.outputs.version }}.apk\`，手机开启「允许安装未知来源」后点击安装。"
           } > release_notes.md
           echo "len=$(wc -c < release_notes.md)" >> $GITHUB_OUTPUT
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: app-release.apk
+          name: cert-planet-${{ steps.ver.outputs.version }}-apk
+          path: ${{ steps.apk.outputs.path }}
           retention-days: 30
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          name: 考证星球 ${{ steps.tag.outputs.name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: 考证星球 ${{ steps.ver.outputs.tag }}
           body_path: release_notes.md
-          files: app-release.apk
+          files: ${{ steps.apk.outputs.path }}
           generate_release_notes: false
           make_latest: true
         env:

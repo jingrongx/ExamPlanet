@@ -168,6 +168,14 @@ function FlashcardMode({ questions, licenseColor }: { questions: Question[]; lic
 
   if (!q) return null
   const mnemonic = getMnemonic(q.id)
+  // 把答案字母（如 "B" 或多选 "ABC"）转换为完整选项文本
+  const correctLetters = q.answer.toUpperCase().replace(/[^A-D]/g, '').split('')
+  const correctTexts = correctLetters.map((l) => {
+    const i = l.charCodeAt(0) - 65
+    const opt = q.options[i]
+    return opt ? `${l}. ${opt.replace(/^[A-D][.、)]\s*/, '')}` : l
+  })
+  const isMulti = correctLetters.length > 1
 
   return (
     <div className="space-y-4">
@@ -196,15 +204,19 @@ function FlashcardMode({ questions, licenseColor }: { questions: Question[]; lic
           </div>
           {/* 背面：答案 + 解析 */}
           <div
-            className="absolute inset-0 glass-strong rounded-3xl p-6 flex flex-col items-center justify-center text-center"
+            className="absolute inset-0 glass-strong rounded-3xl p-6 flex flex-col items-center justify-center text-center overflow-y-auto"
             style={{
               backfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
               border: `1px solid #39ff1450`,
             }}
           >
-            <div className="text-[10px] font-mono text-neon-green mb-2">✓ 正确答案</div>
-            <p className="text-lg font-display font-bold text-neon-green mb-3">{q.answer}</p>
+            <div className="text-[10px] font-mono text-neon-green mb-2">
+              ✓ 正确答案{isMulti ? `（多选 · ${correctLetters.join('')})` : ''}
+            </div>
+            <p className="text-base font-display font-bold text-neon-green mb-3 leading-relaxed">
+              {correctTexts.join('  ｜  ')}
+            </p>
             <p className="text-xs text-stardust/80 leading-relaxed mb-2">{q.explanation}</p>
             {mnemonic && (
               <p className="text-[11px] text-neon-gold leading-relaxed mt-1">🧠 {mnemonic}</p>

@@ -110,12 +110,13 @@ async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
 // 拼接结果应为 https://ghproxy.net/https://github.com/jingrongx/ExamPlanet/releases/download/v1/cert-planet-1.apk
 function getAcceleratedUrls(rawUrl: string): string[] {
   return DOWNLOAD_MIRRORS.map((mirror) => {
-    if (mirror.endsWith('github.com')) {
-      // 最后一个 mirror 是直连，直接返回原始 URL
+    // 直连 mirror 形如 'https://github.com'，以 'https://github.com' 开头
+    // 加速 mirror 形如 'https://ghproxy.net/https://github.com'，不以 'https://github.com' 开头
+    // 注意：不能用 endsWith('github.com')，因为加速镜像也以 'github.com' 结尾
+    if (mirror.startsWith('https://github.com')) {
       return rawUrl
     }
-    // mirror 已经包含 'https://github.com'，所以直接把 rawUrl 拼到 mirror 后面
-    // 因为 rawUrl 也是以 'https://github.com' 开头，正好重叠
+    // 加速镜像已经包含 'https://github.com' 后缀，把 rawUrl 中的 'https://github.com' 前缀去掉再拼接
     // 例：mirror='https://ghproxy.net/https://github.com' + rawUrl='https://github.com/jingrongx/...'
     // 结果='https://ghproxy.net/https://github.com/jingrongx/...'
     return `${mirror}${rawUrl.replace(/^https:\/\/github\.com/, '')}`

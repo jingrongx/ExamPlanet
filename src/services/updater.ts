@@ -102,14 +102,20 @@ async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
 }
 
 // 给定 GitHub release 的原始下载 URL，构造加速链接列表
+// rawUrl 形如 https://github.com/jingrongx/ExamPlanet/releases/download/v1/cert-planet-1.apk
+// mirror 形如 https://ghproxy.net/https://github.com
+// 拼接结果应为 https://ghproxy.net/https://github.com/jingrongx/ExamPlanet/releases/download/v1/cert-planet-1.apk
 function getAcceleratedUrls(rawUrl: string): string[] {
-  // rawUrl 形如 https://github.com/jingrongx/ExamPlanet/releases/download/v1/apk
   return DOWNLOAD_MIRRORS.map((mirror) => {
     if (mirror.endsWith('github.com')) {
-      // 最后一个 mirror 是直连
+      // 最后一个 mirror 是直连，直接返回原始 URL
       return rawUrl
     }
-    return `${mirror}/${rawUrl}`
+    // mirror 已经包含 'https://github.com'，所以直接把 rawUrl 拼到 mirror 后面
+    // 因为 rawUrl 也是以 'https://github.com' 开头，正好重叠
+    // 例：mirror='https://ghproxy.net/https://github.com' + rawUrl='https://github.com/jingrongx/...'
+    // 结果='https://ghproxy.net/https://github.com/jingrongx/...'
+    return `${mirror}${rawUrl.replace(/^https:\/\/github\.com/, '')}`
   })
 }
 
@@ -150,22 +156,14 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
 }
 
 // 打开下载链接（在系统浏览器中打开，由系统下载器接管）
-// 如果第一个镜像失败，会按顺序尝试备用镜像
+// info.apkUrl 已经是构造好的加速链接（第一个镜像），直接用即可
 export async function downloadApk(info: UpdateInfo): Promise<void> {
-  const rawUrl = info.apkUrl.replace(/^https:\/\/ghproxy\.net\/https:\/\/github\.com/, 'https://github.com')
-    .replace(/^https:\/\/gh-proxy\.com\/https:\/\/github\.com/, 'https://github.com')
-    .replace(/^https:\/\/ghproxy\.cc\/https:\/\/github\.com/, 'https://github.com')
-  const urls = getAcceleratedUrls(rawUrl)
-
-  // 直接用第一个镜像在系统浏览器打开
-  // Capacitor 中 window.open 外部 https 链接会走系统浏览器
   try {
-    const win = window.open(urls[0], '_system')
+    const win = window.open(info.apkUrl, '_system')
     if (!win) {
-      // 弹窗被拦截，降级用 location.href
-      // 但 location.href 会离开 APP，所以改用 <a> 标签点击
+      // 弹窗被拦截，降级用 <a> 标签点击
       const a = document.createElement('a')
-      a.href = urls[0]
+      a.href = info.apkUrl
       a.target = '_blank'
       a.rel = 'noopener'
       a.download = info.apkName

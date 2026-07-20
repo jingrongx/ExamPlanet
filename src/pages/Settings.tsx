@@ -91,12 +91,12 @@ export function Settings() {
   const saveApiKey = () => {
     playButton()
     const trimmed = apiKeyInput.trim()
-    console.log('[DEBUG saveApiKey] before save:', {
-      apiKeyInput: trimmed,
+    // 用 console.error 确保日志能被 logcat 捕获（Capacitor 不转发 console.log）
+    console.error('[DEBUG saveApiKey] before save:', {
       apiKeyInputLength: trimmed.length,
-      apiKeyInputPrefix: trimmed.slice(0, 8) + '...',
-      storeApiKeyBefore: settings.deepseekApiKey,
+      apiKeyInputPrefix: trimmed.slice(0, 10),
       storeApiKeyBeforeLength: (settings.deepseekApiKey || '').length,
+      storeApiKeyBeforePrefix: (settings.deepseekApiKey || '').slice(0, 10),
     })
     updateSettings({ deepseekApiKey: trimmed })
     // 异步读取 store 和 localStorage 验证是否真的写入
@@ -104,19 +104,23 @@ export function Settings() {
       const afterStore = useGameStore.getState().settings.deepseekApiKey
       const rawLs = localStorage.getItem('cert-planet-save')
       let lsApiKey: string | null = null
+      let lsParsedOk = false
       try {
         const parsed = rawLs ? JSON.parse(rawLs) : null
         lsApiKey = parsed?.state?.settings?.deepseekApiKey ?? null
-      } catch { /* ignore */ }
-      console.log('[DEBUG saveApiKey] after save:', {
-        storeApiKeyAfter: afterStore,
+        lsParsedOk = true
+      } catch (e) {
+        console.error('[DEBUG saveApiKey] localStorage parse error:', (e as Error).message)
+      }
+      console.error('[DEBUG saveApiKey] after save:', {
         storeApiKeyAfterLength: (afterStore || '').length,
-        storeApiKeyAfterPrefix: (afterStore || '').slice(0, 8) + '...',
-        lsApiKey,
+        storeApiKeyAfterPrefix: (afterStore || '').slice(0, 10),
         lsApiKeyLength: (lsApiKey || '').length,
+        lsApiKeyPrefix: (lsApiKey || '').slice(0, 10),
         lsRawLength: rawLs?.length || 0,
+        lsParsedOk,
       })
-    }, 300)
+    }, 500)
     toast('API Key 已保存', 'success')
   }
 

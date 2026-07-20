@@ -149,6 +149,8 @@ interface GameState {
   studyDays: string[] // ISO date strings
   // AI 解读缓存：questionId -> 解读文本
   aiInterpretCache: Record<string, string>
+  // AI 记忆口诀缓存：questionId -> 口诀文本
+  mnemonicCache: Record<string, string>
   // Actions
   answer: (questionId: string, isCorrect: boolean, quality: number, timeSpentMs: number) => {
     coinsGain: number
@@ -168,6 +170,7 @@ interface GameState {
   claimDailyTask: (taskId: string) => { coins: number }
   buyItem: (cost: number, useDiamonds?: boolean) => boolean
   setAiInterpret: (questionId: string, text: string) => void
+  setMnemonic: (questionId: string, text: string) => void
   resetAll: () => void
   exportData: () => string
   importData: (json: string) => boolean
@@ -201,6 +204,7 @@ export const useGameStore = create<GameState>()(
       totalCorrect: 0,
       studyDays: [],
       aiInterpretCache: {},
+      mnemonicCache: {},
 
       answer: (questionId, isCorrect, quality, timeSpentMs) => {
         const state = get()
@@ -455,6 +459,11 @@ export const useGameStore = create<GameState>()(
         set({ aiInterpretCache })
       },
 
+      setMnemonic: (questionId, text) => {
+        const mnemonicCache = { ...get().mnemonicCache, [questionId]: text }
+        set({ mnemonicCache })
+      },
+
       resetAll: () => {
         set({
           userId: 'astro-' + Math.random().toString(36).slice(2, 10),
@@ -480,6 +489,7 @@ export const useGameStore = create<GameState>()(
           totalCorrect: 0,
           studyDays: [],
           aiInterpretCache: {},
+          mnemonicCache: {},
         })
       },
 

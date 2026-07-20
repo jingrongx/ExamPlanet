@@ -91,13 +91,7 @@ export function Settings() {
   const saveApiKey = () => {
     playButton()
     const trimmed = apiKeyInput.trim()
-    // 用 console.error 确保日志能被 logcat 捕获（Capacitor 不转发 console.log）
-    console.error('[DEBUG saveApiKey] before save:', {
-      apiKeyInputLength: trimmed.length,
-      apiKeyInputPrefix: trimmed.slice(0, 10),
-      storeApiKeyBeforeLength: (settings.deepseekApiKey || '').length,
-      storeApiKeyBeforePrefix: (settings.deepseekApiKey || '').slice(0, 10),
-    })
+    const beforeLen = (settings.deepseekApiKey || '').length
     updateSettings({ deepseekApiKey: trimmed })
     // 异步读取 store 和 localStorage 验证是否真的写入
     setTimeout(() => {
@@ -109,17 +103,10 @@ export function Settings() {
         const parsed = rawLs ? JSON.parse(rawLs) : null
         lsApiKey = parsed?.state?.settings?.deepseekApiKey ?? null
         lsParsedOk = true
-      } catch (e) {
-        console.error('[DEBUG saveApiKey] localStorage parse error:', (e as Error).message)
-      }
-      console.error('[DEBUG saveApiKey] after save:', {
-        storeApiKeyAfterLength: (afterStore || '').length,
-        storeApiKeyAfterPrefix: (afterStore || '').slice(0, 10),
-        lsApiKeyLength: (lsApiKey || '').length,
-        lsApiKeyPrefix: (lsApiKey || '').slice(0, 10),
-        lsRawLength: rawLs?.length || 0,
-        lsParsedOk,
-      })
+      } catch { /* ignore */ }
+      // 直接在 toast 上显示调试信息
+      const msg = `输入长度=${trimmed.length} | 保存前store长度=${beforeLen} | 保存后store长度=${(afterStore || '').length} | localStorage长度=${(lsApiKey || '').length} | localStorage解析OK=${lsParsedOk} | LS原始长度=${rawLs?.length || 0}`
+      toast(msg, 'info')
     }, 500)
     toast('API Key 已保存', 'success')
   }

@@ -46,6 +46,13 @@ async function initNative() {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
     await StatusBar.setStyle({ style: Style.Light })
     await StatusBar.setBackgroundColor({ color: '#050818' })
+    // 显式启用状态栏覆盖 WebView（沉浸式），配合 CSS --safe-top 避让
+    // Android 上 env(safe-area-inset-top) 经常返回 0，已在 index.css 用 max() 兜底 24px
+    try {
+      await StatusBar.setOverlaysWebView({ overlay: true })
+    } catch (e) {
+      // 部分 Android 版本不支持该 API，忽略
+    }
 
     const { SplashScreen } = await import('@capacitor/splash-screen')
     await SplashScreen.hide()

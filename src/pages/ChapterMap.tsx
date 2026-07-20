@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useEffect, useRef } from 'react'
 import { getLicense, getChapters, getQuestionsByChapter } from '../data/licenses'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, ProgressRing } from '../components/ui'
@@ -9,18 +10,42 @@ export function ChapterMap() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { nodeProgress, passNode } = useGameStore()
+  // 每个章节卡片的 ref，用于自动滚动定位
+  const chapterRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  if (!id) return null
-  const license = getLicense(id as any)
-  const chapters = getChapters(id as any)
+  const license = id ? getLicense(id as any) : null
+  const chapters = id ? getChapters(id as any) : []
 
   // 解锁逻辑：第 1 章默认解锁；通过第 N 章解锁第 N+1 章
   function isUnlocked(idx: number): boolean {
+    if (!license) return false
     if (idx === 0) return true
     const prevNode = `${license.id}-ch-${idx}`
     const prev = nodeProgress[prevNode]
     return prev === 'passed' || prev === 'perfect'
   }
+
+  // 进入页面时自动滚动到最新已解锁但未通关的关卡
+  useEffect(() => {
+    if (!license || chapters.length === 0) return
+    const firstUnplayed = chapters.findIndex((_, i) => {
+      const unlocked = isUnlocked(i)
+      const nodeId = `${license.id}-ch-${i + 1}`
+      const state = nodeProgress[nodeId]
+      const passed = state === 'passed' || state === 'perfect'
+      return unlocked && !passed
+    })
+    const target = firstUnplayed >= 0 ? firstUnplayed : chapters.length - 1
+    const el = chapterRefs.current[target]
+    if (el) {
+      // 用 'center' 让目标卡片居中显示，避免被顶部 sticky 卡片遮挡
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
+    }
+  }, [id, nodeProgress])
+
+  if (!id || !license) return null
 
   const goQuiz = (chapterId: string, idx: number) => {
     if (!isUnlocked(idx)) return
@@ -47,11 +72,16 @@ export function ChapterMap() {
 
   return (
     <div className="space-y-4">
-      {/* 顶部执照信息 */}
+      {/* 顶部执照信息（sticky 固定，滚动时不动） */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-strong p-4 rounded-3xl relative overflow-hidden"
+        className="glass-strong p-4 rounded-3xl relative overflow-hidden sticky z-20"
+        style={{
+          top: 'calc(var(--safe-top) + 4.5rem)',
+          background: 'rgba(10, 14, 39, 0.92)',
+          backdropFilter: 'blur(16px)',
+        }}
       >
         <div
           className="absolute -right-10 -top-10 w-40 h-40 rounded-full blur-3xl opacity-40"
@@ -105,6 +135,7 @@ export function ChapterMap() {
             return (
               <motion.div
                 key={ch.id}
+                ref={(el) => { chapterRefs.current[i] = el }}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.06 }}

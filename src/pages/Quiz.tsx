@@ -11,6 +11,7 @@ import {
 import { CoinBurst, ComboFlash, CritFlash, WrongShake, CorrectGlow, RankUpBanner } from '../components/effects/Effects'
 import { streamInterpretQuestion } from '../services/ai'
 import { MnemonicCard } from '../components/ui/MnemonicCard'
+import { renderMarkdown } from '../engine/markdown'
 import type { Question } from '../types'
 
 // 判断是否多选题：type === 'multi' 或 answer 多于 1 个字母
@@ -455,8 +456,8 @@ export function Quiz() {
                           </div>
                         ) : aiText ? (
                           <>
-                            <div className="text-sm text-stardust/85 leading-relaxed whitespace-pre-wrap break-words">
-                              {renderAiText(aiText)}
+                            <div className="text-sm text-stardust/85 leading-relaxed break-words">
+                              {renderMarkdown(aiText)}
                             </div>
                             {/* 重新生成按钮 */}
                             {!aiLoading && !aiText.startsWith('⚠️') && (
@@ -552,45 +553,6 @@ export function Quiz() {
       <RankUpBanner trigger={rankUpTrigger} rankName={rankUpName} />
     </div>
   )
-}
-
-// 把 AI 返回的 ## 标题 + 内容简单渲染为分段（无需 markdown 引擎）
-function renderAiText(text: string): JSX.Element {
-  const parts = text.split(/(^## .+$)/m).filter(Boolean)
-  const elements: JSX.Element[] = []
-  parts.forEach((part, i) => {
-    if (part.startsWith('## ')) {
-      const title = part.slice(3).trim()
-      const colors: Record<string, string> = {
-        '题型': '#00f5ff',
-        '解题思路': '#39ff14',
-        '背景知识': '#ffd700',
-        '易错提醒': '#ff2e88',
-      }
-      let color = '#00f5ff'
-      for (const k of Object.keys(colors)) {
-        if (title.includes(k)) { color = colors[k]; break }
-      }
-      elements.push(
-        <div key={`t-${i}`} className="mt-2 first:mt-0 font-tech font-bold text-xs" style={{ color }}>
-          {title}
-        </div>,
-      )
-    } else {
-      const content = part.trim()
-      if (content) {
-        elements.push(
-          <p key={`p-${i}`} className="mt-1 text-sm text-stardust/85 leading-relaxed">
-            {content}
-          </p>,
-        )
-      }
-    }
-  })
-  if (elements.length === 0) {
-    return <>{text}</>
-  }
-  return <>{elements}</>
 }
 
 function QuizResult({ correct, total, onBack, onRetry }: { correct: number; total: number; onBack: () => void; onRetry: () => void }) {

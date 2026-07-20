@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { Modal, NeonButton, useToast } from './index'
 import { playButton } from '../../engine/audio'
+import { renderMarkdown } from '../../engine/markdown'
 import { downloadApk, formatSize, formatDate, type UpdateInfo } from '../../services/updater'
 
 interface UpdateModalProps {
@@ -57,11 +58,11 @@ export function UpdateModal({ open, onClose, info, checking }: UpdateModalProps)
               )}
             </div>
 
-            <div className="glass rounded-xl p-3 max-h-48 overflow-y-auto mb-3">
+            <div className="glass rounded-xl p-3 max-h-64 overflow-y-auto mb-3">
               <div className="text-[10px] font-tech font-bold text-neon-gold mb-1.5">📝 更新内容</div>
-              <pre className="text-xs text-stardust/85 whitespace-pre-wrap break-words font-sans leading-relaxed">
-                {info.changelog}
-              </pre>
+              <div className="text-xs text-stardust/85 leading-relaxed break-words">
+                {renderMarkdown(info.changelog)}
+              </div>
             </div>
 
             {info.apkSize > 0 && (

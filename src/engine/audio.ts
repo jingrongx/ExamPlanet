@@ -198,6 +198,7 @@ export function stopAmbient() {
 // - Web 环境：用浏览器 Web Speech API（开发调试用）
 
 import { TextToSpeech } from '@capacitor-community/text-to-speech'
+import { stripMarkdown } from './markdown'
 
 const isNative = typeof window !== 'undefined'
   && ((window as any).Capacitor?.isNative ?? false)
@@ -304,12 +305,15 @@ function speakWeb(text: string, opts: SpeakOptions): void {
 }
 
 export function speak(text: string, opts: SpeakOptions = {}) {
+  // 统一过滤 markdown 标记（# * ` > - 等），避免 TTS 朗读出符号
+  const cleanText = stripMarkdown(text)
+  if (!cleanText) return
   if (isNative) {
     // 原生：异步调用 Capacitor TTS
-    speakNative(text, opts)
+    speakNative(cleanText, opts)
   } else {
     // Web：用 Web Speech API（开发环境）
-    speakWeb(text, opts)
+    speakWeb(cleanText, opts)
   }
 }
 

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { streamMnemonic } from '../../services/mnemonic'
 import { useGameStore } from '../../store/useGameStore'
 import { playButton } from '../../engine/audio'
+import { renderMarkdown } from '../../engine/markdown'
 import type { Question } from '../../types'
 
 function isMultiChoice(q: Question): boolean {
@@ -114,7 +115,7 @@ export function MnemonicCard({ question, licenseName }: MnemonicCardProps) {
         </div>
       ) : text ? (
         <>
-          <div className="text-sm text-stardust/85 leading-relaxed whitespace-pre-wrap break-words">
+          <div className="text-sm text-stardust/85 leading-relaxed break-words">
             {renderMnemonicText(text)}
           </div>
           {/* 重新生成按钮 */}
@@ -167,7 +168,7 @@ export function MnemonicCard({ question, licenseName }: MnemonicCardProps) {
 }
 
 // 把 AI 返回的记忆口诀 4 段（## 谐音对照 / ## 场景动作 / ## 押韵口诀 / ## 关系公式）
-// 分段渲染，每段带 emoji 图标和主题色
+// 分段渲染：段标题保留 emoji + 主题色，段内容用 markdown 渲染（支持 **加粗** / `代码` / 列表 等）
 function renderMnemonicText(text: string): JSX.Element {
   const parts = text.split(/(^## .+$)/m).filter(Boolean)
   const elements: JSX.Element[] = []
@@ -195,9 +196,9 @@ function renderMnemonicText(text: string): JSX.Element {
       const content = part.trim()
       if (content) {
         elements.push(
-          <p key={`p-${i}`} className="mt-1 text-sm text-stardust/85 leading-relaxed">
-            {content}
-          </p>,
+          <div key={`p-${i}`} className="mt-1 text-stardust/85 leading-relaxed">
+            {renderMarkdown(content)}
+          </div>,
         )
       }
     }

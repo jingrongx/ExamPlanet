@@ -193,7 +193,23 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     },
   ]
 
+  // 迭代上限保护：防止 AI 返回的不规范 markdown 触发边界 case 导致死循环
+  // 一旦超过上限，剩余文本作为纯文本输出，保证 UI 不卡死
+  const MAX_ITERATIONS = 500
+  let iterations = 0
+  let lastRestLen = -1
   while (rest.length > 0) {
+    if (++iterations > MAX_ITERATIONS) {
+      nodes.push(<Fragment key={`${keyPrefix}-${key++}`}>{rest}</Fragment>)
+      break
+    }
+    // 防御：如果 rest 长度没变，说明逻辑有 bug，强制退出避免死循环
+    if (rest.length === lastRestLen) {
+      nodes.push(<Fragment key={`${keyPrefix}-${key++}`}>{rest}</Fragment>)
+      break
+    }
+    lastRestLen = rest.length
+
     let earliestIdx = -1
     let earliestMatch: RegExpExecArray | null = null
     let earliestRender: ((m: RegExpExecArray) => ReactNode) | null = null

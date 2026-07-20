@@ -18,10 +18,13 @@ const DOWNLOAD_MIRRORS = [
   'https://github.com',
 ]
 
-// GitHub API 镜像（API 不一定能用 ghproxy 加速，备用）
+// GitHub API 镜像（国内访问 GitHub API 慢，优先用加速）
+// 注意：ghproxy 通常能加速 api.github.com（路径前缀方式同样适用）
 const API_MIRRORS = [
-  GITHUB_API,
   `https://ghproxy.net/https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+  `https://gh-proxy.com/https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+  `https://ghproxy.cc/https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+  GITHUB_API, // 直连兜底
 ]
 
 export interface UpdateInfo {

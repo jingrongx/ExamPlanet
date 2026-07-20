@@ -186,27 +186,38 @@ export function stopAmbient() {
   }
 }
 
-// TTS 朗读（Android WebView 兼容版）
-// - voices 异步加载：首次调用时若没拿到中文 voice 会等 onvoiceschanged
-// - Android WebView 上 speechSynthesis.speak 必须在用户交互后触发
-//   （由调用方在 onClick 等回调里调用 speak 即可满足）
-// - 失败时通过 onError 回调让 UI 提示
-let currentUtterance: SpeechSynthesisUtterance | null = null
+// TTS 朗读（原生优先 + Web Speech 降级）
+//
+// 重要：Android WebView 的 window.speechSynthesis 只能调用 Chrome 内置 TTS，
+// 无法使用系统安装的第三方 TTS 引擎（如讯飞、华为、Google TTS）。
+// 因此在原生环境必须用 @capacitor-community/text-to-speech 走 Android 原生 TextToSpeech API，
+// 才能调用系统设置里安装的所有 TTS 引擎。
+//
+// 流程：
+// - 原生环境：用 Capacitor TTS 插件 → Android TextToSpeech → 系统已装引擎（讯飞/华为/Google）
+// - Web 环境：用浏览器 Web Speech API（开发调试用）
 
-function tryLoadVoices(): SpeechSynthesisVoice[] {
+import { TextToSpeech } from '@capacitor-community/text-to-speech'
+
+const isNative = typeof window !== 'undefined'
+  && ((window as any).Capacitor?.isNative ?? false)
+
+let currentUtterance: SpeechSynthesisUtterance | null = null
+let webVoicesLoaded = false
+
+function tryLoadWebVoices(): SpeechSynthesisVoice[] {
   if (!('speechSynthesis' in window)) return []
   const voices = window.speechSynthesis.getVoices()
+  if (voices && voices.length > 0) webVoicesLoaded = true
   return voices || []
 }
 
-// 监听 voices 加载完成（Chrome/WebView 异步触发）
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   try {
     window.speechSynthesis.onvoiceschanged = () => {
-      tryLoadVoices()
+      tryLoadWebVoices()
     }
-    // 主动尝试一次
-    tryLoadVoices()
+    tryLoadWebVoices()
   } catch { /* ignore */ }
 }
 
@@ -217,9 +228,38 @@ export interface SpeakOptions {
   onStart?: () => void
 }
 
-export function speak(text: string, opts: SpeakOptions = {}) {
+// 原生 TTS：调用 Capacitor 插件
+async function speakNative(text: string, opts: SpeakOptions): Promise<void> {
+  try {
+    // 先停止上一个朗读
+    await TextToSpeech.stop().catch(() => { /* ignore */ })
+
+    opts.onStart?.()
+
+    await TextToSpeech.speak({
+      text,
+      lang: 'zh-CN',
+      rate: opts.rate ?? 1.0,
+      pitch: opts.pitch ?? 1.0,
+      volume: 1.0,
+    })
+  } catch (err) {
+    const msg = (err as Error)?.message || String(err)
+    if (msg.includes('not installed') || msg.includes('no engine')) {
+      opts.onError?.('系统未安装中文 TTS 引擎，请到「系统设置 → 文字转语音输出」中安装')
+    } else if (msg.includes('language') || msg.includes('locale')) {
+      opts.onError?.('TTS 引擎不支持中文，请安装中文 TTS 引擎')
+    } else {
+      opts.onError?.(`语音朗读失败：${msg}`)
+    }
+    console.error('[tts native] error:', err)
+  }
+}
+
+// Web 端 TTS：用浏览器 Web Speech API
+function speakWeb(text: string, opts: SpeakOptions): void {
   if (!('speechSynthesis' in window)) {
-    opts.onError?.('当前设备不支持语音朗读（Web Speech API 不可用）')
+    opts.onError?.('当前浏览器不支持语音朗读')
     return
   }
   try {
@@ -231,8 +271,7 @@ export function speak(text: string, opts: SpeakOptions = {}) {
     u.rate = opts.rate ?? 1
     u.pitch = opts.pitch ?? 1
 
-    // 拿中文语音（兼容 zh-CN / zh_CN / cmn 等）
-    const voices = tryLoadVoices()
+    const voices = tryLoadWebVoices()
     const zhVoice = voices.find((v) =>
       v.lang.toLowerCase().startsWith('zh') ||
       v.lang.toLowerCase().includes('cmn'),
@@ -243,17 +282,15 @@ export function speak(text: string, opts: SpeakOptions = {}) {
     u.onerror = (e) => {
       const errType = (e as any)?.error || 'unknown'
       let msg = '语音朗读失败'
-      if (errType === 'not-allowed') msg = '语音朗读被系统拦截，请检查系统 TTS 引擎'
+      if (errType === 'not-allowed') msg = '语音朗读被浏览器拦截'
       else if (errType === 'no-speech') msg = '未检测到可用的语音引擎'
-      else if (errType === 'synthesis-failed') msg = '语音合成失败，可能缺少中文 TTS 引擎'
+      else if (errType === 'synthesis-failed') msg = '语音合成失败'
       opts.onError?.(msg)
-      console.error('[tts] error:', errType)
+      console.error('[tts web] error:', errType)
     }
 
     currentUtterance = u
-    // Android WebView 偶发不发声：先 cancel 再 speak 更稳
     window.speechSynthesis.cancel()
-    // 短延迟确保 cancel 完成
     setTimeout(() => {
       try {
         window.speechSynthesis.speak(u)
@@ -266,25 +303,60 @@ export function speak(text: string, opts: SpeakOptions = {}) {
   }
 }
 
-export function stopSpeak() {
-  if ('speechSynthesis' in window) {
+export function speak(text: string, opts: SpeakOptions = {}) {
+  if (isNative) {
+    // 原生：异步调用 Capacitor TTS
+    speakNative(text, opts)
+  } else {
+    // Web：用 Web Speech API（开发环境）
+    speakWeb(text, opts)
+  }
+}
+
+export async function stopSpeak() {
+  if (isNative) {
+    await TextToSpeech.stop().catch(() => { /* ignore */ })
+  } else if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
     currentUtterance = null
   }
 }
 
-export function isSpeaking() {
+export async function isSpeaking(): Promise<boolean> {
+  if (isNative) {
+    // 插件未提供 isSpeaking，近似用 web 端 speechSynthesis.speaking
+    return false
+  }
   return 'speechSynthesis' in window && window.speechSynthesis.speaking
 }
 
-// 检测 TTS 是否可用（用于 UI 提示）
+// 检测 TTS 是否可用
+// - 原生：默认 true（Android 系统都内置 TextToSpeech 引擎）
+// - Web：检测 Web Speech API
 export function isTtsSupported(): boolean {
+  if (isNative) return true
   return typeof window !== 'undefined' && 'speechSynthesis' in window
 }
 
 // 检测是否有中文语音引擎
-export function hasZhVoice(): boolean {
-  const voices = tryLoadVoices()
+// - 原生：通过 Capacitor 插件 isLanguageSupported 检查
+// - Web：通过 getVoices 检查
+export async function hasZhVoice(): Promise<boolean> {
+  if (isNative) {
+    try {
+      // 优先用 isLanguageSupported（更准确）
+      const { supported } = await TextToSpeech.isLanguageSupported({ lang: 'zh-CN' })
+      if (supported) return true
+      // 备用：检查 getSupportedLanguages 列表
+      const { languages } = await TextToSpeech.getSupportedLanguages()
+      return (languages || []).some((l) => l.toLowerCase().startsWith('zh'))
+    } catch (err) {
+      console.warn('[tts] hasZhVoice detection failed:', err)
+      // 出错时返回 true，让用户尝试 speak，由 speak 的 onError 反馈具体错误
+      return true
+    }
+  }
+  const voices = tryLoadWebVoices()
   return voices.some((v) =>
     v.lang.toLowerCase().startsWith('zh') ||
     v.lang.toLowerCase().includes('cmn'),

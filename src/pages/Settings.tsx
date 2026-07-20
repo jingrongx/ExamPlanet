@@ -29,10 +29,13 @@ export function Settings() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [showUpdate, setShowUpdate] = useState(false)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  // TTS 中文引擎检测结果（原生环境异步检测）
+  const [zhVoiceReady, setZhVoiceReady] = useState<boolean | null>(null)
 
-  // 进入设置页读取当前版本号
+  // 进入设置页读取当前版本号 + 检测 TTS 中文引擎
   useEffect(() => {
     getCurrentVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion('未知'))
+    hasZhVoice().then(setZhVoiceReady).catch(() => setZhVoiceReady(true))
   }, [])
 
   const handleCheckUpdate = async () => {
@@ -115,7 +118,7 @@ export function Settings() {
     setTimeout(() => navigate('/'), 300)
   }
 
-  const testTTS = () => {
+  const testTTS = async () => {
     if (!settings.ttsEnabled) {
       toast('请先开启语音朗读', 'info')
       return
@@ -124,7 +127,8 @@ export function Settings() {
       toast('当前设备不支持语音朗读', 'error')
       return
     }
-    if (!hasZhVoice()) {
+    const zhReady = await hasZhVoice()
+    if (!zhReady) {
       toast('⚠️ 未检测到中文语音引擎，请在系统设置→语言和输入→文字转语音输出中安装中文 TTS', 'error')
       return
     }
@@ -187,14 +191,16 @@ export function Settings() {
             label="语音朗读 (TTS)"
             desc="朗读题目和解析（依赖系统中文 TTS 引擎）"
             value={settings.ttsEnabled}
-            onChange={(v) => {
+            onChange={async (v) => {
               toggle('ttsEnabled', v)
               if (v) {
                 if (!isTtsSupported()) {
                   toast('当前设备不支持语音朗读', 'error')
                   return
                 }
-                if (!hasZhVoice()) {
+                const zhReady = await hasZhVoice()
+                setZhVoiceReady(zhReady)
+                if (!zhReady) {
                   toast('⚠️ 系统未安装中文 TTS 引擎，请到系统设置→文字转语音输出中安装', 'error')
                   return
                 }
@@ -204,9 +210,9 @@ export function Settings() {
               }
             }}
           />
-          {settings.ttsEnabled && !hasZhVoice() && (
+          {settings.ttsEnabled && zhVoiceReady === false && (
             <div className="px-4 pb-3 text-[10px] text-neon-red/80 leading-relaxed">
-              ⚠️ 当前未检测到中文语音引擎。请到「系统设置 → 语言和输入法 → 文字转语音输出」中安装/启用中文 TTS（如 Google 文字转语音引擎、华为/小米自带 TTS）。
+              ⚠️ 当前未检测到中文语音引擎。请到「系统设置 → 语言和输入法 → 文字转语音输出」中安装/启用中文 TTS（如讯飞语音、Google 文字转语音引擎、华为/小米自带 TTS）。
             </div>
           )}
           <div className="p-4">

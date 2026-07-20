@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
 import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume } from '../engine/audio'
@@ -18,11 +18,11 @@ export function Settings() {
   const [showApiKey, setShowApiKey] = useState(false)
   const [testing, setTesting] = useState(false)
 
-  // 当 store 中的 deepseekApiKey 外部变化时（如导入存档、重置），同步到输入框
-  // 避免因组件重新挂载或 store 变更导致输入框与 store 不一致
-  useEffect(() => {
-    setApiKeyInput(settings.deepseekApiKey || '')
-  }, [settings.deepseekApiKey])
+  // 注意：不要用 useEffect 把 settings.deepseekApiKey 同步回 apiKeyInput！
+  // 之前有 useEffect 会在 settings 变化时 setApiKeyInput(settings.deepseekApiKey || '')，
+  // 但用户输入过程中如果触发任何 store 更新（如 persist 写回），useEffect 会用 store 里的
+  // 旧值覆盖用户正在输入的内容，导致输入框被清空，保存时 apiKeyInput 为空字符串。
+  // 导入存档/重置场景下组件会重新挂载，useState 初始化就能拿到最新值，不需要 useEffect。
 
   const toggle = (key: keyof typeof settings, value: boolean) => {
     playButton()
@@ -91,23 +91,11 @@ export function Settings() {
   const saveApiKey = () => {
     playButton()
     const trimmed = apiKeyInput.trim()
-    const beforeLen = (settings.deepseekApiKey || '').length
+    if (!trimmed) {
+      toast('API Key 不能为空', 'info')
+      return
+    }
     updateSettings({ deepseekApiKey: trimmed })
-    // 异步读取 store 和 localStorage 验证是否真的写入
-    setTimeout(() => {
-      const afterStore = useGameStore.getState().settings.deepseekApiKey
-      const rawLs = localStorage.getItem('cert-planet-save')
-      let lsApiKey: string | null = null
-      let lsParsedOk = false
-      try {
-        const parsed = rawLs ? JSON.parse(rawLs) : null
-        lsApiKey = parsed?.state?.settings?.deepseekApiKey ?? null
-        lsParsedOk = true
-      } catch { /* ignore */ }
-      // 直接在 toast 上显示调试信息
-      const msg = `输入长度=${trimmed.length} | 保存前store长度=${beforeLen} | 保存后store长度=${(afterStore || '').length} | localStorage长度=${(lsApiKey || '').length} | localStorage解析OK=${lsParsedOk} | LS原始长度=${rawLs?.length || 0}`
-      toast(msg, 'info')
-    }, 500)
     toast('API Key 已保存', 'success')
   }
 

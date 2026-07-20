@@ -198,10 +198,13 @@ export function stopAmbient() {
 // - Web 环境：用浏览器 Web Speech API（开发调试用）
 
 import { TextToSpeech } from '@capacitor-community/text-to-speech'
+import { Capacitor } from '@capacitor/core'
 import { stripMarkdown } from './markdown'
 
-const isNative = typeof window !== 'undefined'
-  && ((window as any).Capacitor?.isNative ?? false)
+// 用 Capacitor 官方 API 判断是否原生环境
+// 之前用 (window as any).Capacitor?.isNative 在某些 Android WebView 上拿不到，
+// 导致 isTtsSupported() 返回 false，TTS 开关报"设备不支持"
+const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
 
 let currentUtterance: SpeechSynthesisUtterance | null = null
 let webVoicesLoaded = false

@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { Layout } from './components/layout/Layout'
 import { ToastProvider } from './components/ui'
 import { UpdateModal } from './components/ui/UpdateModal'
@@ -84,8 +85,7 @@ export default function App() {
   // 启动后自动检测更新（仅在原生环境，且本次启动只检测一次）
   useEffect(() => {
     if (checked) return
-    const isNative = typeof window !== 'undefined'
-      && ((window as any).Capacitor?.isNative ?? false)
+    const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
     if (!isNative) return
     setChecked(true)
     const timer = setTimeout(async () => {

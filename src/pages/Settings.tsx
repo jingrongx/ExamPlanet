@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useGameStore } from '../store/useGameStore'
 import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
 import { playButton, startAmbient, stopAmbient, speak, stopSpeak, setAudioEnabled, setAmbientEnabled, setSfxVolume } from '../engine/audio'
@@ -17,6 +17,12 @@ export function Settings() {
   const [apiKeyInput, setApiKeyInput] = useState(settings.deepseekApiKey || '')
   const [showApiKey, setShowApiKey] = useState(false)
   const [testing, setTesting] = useState(false)
+
+  // 当 store 中的 deepseekApiKey 外部变化时（如导入存档、重置），同步到输入框
+  // 避免因组件重新挂载或 store 变更导致输入框与 store 不一致
+  useEffect(() => {
+    setApiKeyInput(settings.deepseekApiKey || '')
+  }, [settings.deepseekApiKey])
 
   const toggle = (key: keyof typeof settings, value: boolean) => {
     playButton()

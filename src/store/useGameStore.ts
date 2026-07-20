@@ -500,6 +500,26 @@ export const useGameStore = create<GameState>()(
     {
       name: 'cert-planet-save',
       storage: createJSONStorage(() => localStorage),
+      // 深合并：避免旧存档的 settings 对象整体覆盖 DEFAULT_SETTINGS，
+      // 导致新加的 deepseekApiKey/aiInterpretEnabled 字段丢失为 undefined
+      merge: (persisted, current) => {
+        if (!persisted) return current
+        try {
+          const persistedState = JSON.parse(persisted as string)
+          // 对 settings 做浅合并，保留新增字段的默认值
+          const mergedSettings = {
+            ...current.settings,
+            ...(persistedState.settings || {}),
+          }
+          return {
+            ...current,
+            ...persistedState,
+            settings: mergedSettings,
+          }
+        } catch {
+          return current
+        }
+      },
     },
   ),
 )

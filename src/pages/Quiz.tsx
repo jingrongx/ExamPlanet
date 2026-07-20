@@ -63,6 +63,9 @@ export function Quiz() {
   // 记录最近一次作答信息，供 AI 解读使用
   const lastAnswerRef = useRef<{ userLetters: string; correct: boolean }>({ userLetters: '', correct: false })
 
+  // 缓存 AI 解读的 markdown 渲染结果，避免无关重渲染触发重新解析
+  const renderedAiText = useMemo(() => renderMarkdown(aiText), [aiText])
+
   const q = questions[idx]
   const multi = q ? isMultiChoice(q) : false
 
@@ -457,7 +460,7 @@ export function Quiz() {
                         ) : aiText ? (
                           <>
                             <div className="text-sm text-stardust/85 leading-relaxed break-words">
-                              {renderMarkdown(aiText)}
+                              {renderedAiText}
                             </div>
                             {/* 重新生成按钮 */}
                             {!aiLoading && !aiText.startsWith('⚠️') && (

@@ -132,43 +132,11 @@ ${optionsBlock}
     return
   }
 
-  // 模拟流式打字机效果：按字符块逐步输出
-  await simulateTyping(fullText, onChunk, signal)
-}
-
-/**
- * 把完整文本按 ~3 个字符一组、每 16ms 一组逐步输出
- * 支持 AbortSignal 中断
- */
-async function simulateTyping(
-  text: string,
-  onChunk: (text: string) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  const chunkSize = 3
-  const intervalMs = 16
-  for (let i = 0; i < text.length; i += chunkSize) {
-    if (signal?.aborted) return
-    // 切后台时 WebView 会冻结 setTimeout，回来时挂起的定时器会连续 resolve，
-    // 导致 setText 被高频调用引发渲染风暴。检测到页面不可见时立即一次性输出剩余文本。
-    if (typeof document !== 'undefined' && document.hidden) {
-      onChunk(text.slice(i))
-      return
-    }
-    onChunk(text.slice(i, i + chunkSize))
-    if (i + chunkSize < text.length) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, intervalMs)
-        // 支持中断时立即 resolve
-        if (signal) {
-          signal.addEventListener('abort', () => {
-            clearTimeout(timer)
-            resolve()
-          }, { once: true })
-        }
-      })
-    }
-  }
+  // 一次性输出完整文本，不再用模拟打字机
+  // 原因：每 16ms 触发 setText → 重渲染 → renderMarkdown 全量解析，
+  // WebView JS 性能跟不上，渲染队列堆积导致主线程阻塞，界面卡死
+  if (signal?.aborted) return
+  onChunk(fullText)
 }
 
 /**

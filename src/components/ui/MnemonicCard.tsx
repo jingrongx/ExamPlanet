@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { streamMnemonic } from '../../services/mnemonic'
 import { useGameStore } from '../../store/useGameStore'
@@ -86,6 +86,10 @@ export function MnemonicCard({ question, licenseName }: MnemonicCardProps) {
   const hasKey = !!settings.deepseekApiKey
   const isError = text.startsWith('⚠️')
 
+  // 缓存渲染结果：text 不变时不重新解析 markdown
+  // 避免 React 因任何无关状态变化（如 store 更新）触发重新解析
+  const renderedText = useMemo(() => renderMnemonicText(text), [text])
+
   return (
     <div className="glass p-4 rounded-2xl" style={{ borderLeft: '2px solid #ffd700' }}>
       <div className="flex items-center justify-between mb-1.5">
@@ -116,7 +120,7 @@ export function MnemonicCard({ question, licenseName }: MnemonicCardProps) {
       ) : text ? (
         <>
           <div className="text-sm text-stardust/85 leading-relaxed break-words">
-            {renderMnemonicText(text)}
+            {renderedText}
           </div>
           {/* 重新生成按钮 */}
           {!loading && !isError && (

@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { useState, useEffect, Suspense } from 'react'
 import { LICENSES } from '../data/licenses'
 import { useGameStore, getRankByExp } from '../store/useGameStore'
-import { GlassCard, NeonButton, useToast } from '../components/ui'
+import { GlassCard, NeonButton, Modal, useToast } from '../components/ui'
 import { playButton, playCoin } from '../engine/audio'
 import { SpaceHallScene } from '../components/three/SpaceHallScene'
 import { ErrorBoundary } from '../components/three/ErrorBoundary'
@@ -42,10 +42,22 @@ export function Hall() {
   const rank = getRankByExp(exp)
 
   const [hallReady, setHallReady] = useState(false)
+  const [showExamPicker, setShowExamPicker] = useState(false)
   useEffect(() => {
     const t = setTimeout(() => setHallReady(true), 100)
     return () => clearTimeout(t)
   }, [])
+
+  // 点击「模拟考试」时弹出执照选择器
+  const openExamPicker = () => {
+    playButton()
+    setShowExamPicker(true)
+  }
+  const startExam = (id: LicenseId) => {
+    playButton()
+    setShowExamPicker(false)
+    navigate(`/exam/${id}`)
+  }
 
   const goLicense = (id: LicenseId) => {
     playButton()
@@ -219,10 +231,36 @@ export function Hall() {
 
       {/* 快捷入口 */}
       <section className="grid grid-cols-3 gap-2">
-        <QuickCard icon="📝" label="模拟考试" color="#ff2e88" onClick={() => { playButton(); navigate('/exam/uav') }} />
+        <QuickCard icon="📝" label="模拟考试" color="#ff2e88" onClick={openExamPicker} />
         <QuickCard icon="🧠" label="记忆工坊" color="#9d4edd" onClick={() => { playButton(); navigate('/memory') }} />
         <QuickCard icon="📊" label="数据中心" color="#00f5ff" onClick={() => { playButton(); navigate('/data') }} />
       </section>
+
+      {/* 模拟考试执照选择器 */}
+      <Modal open={showExamPicker} onClose={() => setShowExamPicker(false)} title="选择考试执照">
+        <div className="py-2">
+          <p className="text-xs text-stardust/60 mb-3 text-center">选择要模拟考试的执照类别</p>
+          <div className="grid grid-cols-2 gap-2">
+            {LICENSES.map((lic) => (
+              <button
+                key={lic.id}
+                onClick={() => startExam(lic.id)}
+                className="glass p-3 rounded-2xl text-left hover:border-white/30 transition-all"
+                style={{ boxShadow: `0 0 0 1px ${lic.color}30` }}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-2xl" style={{ filter: `drop-shadow(0 0 6px ${lic.color})` }}>{lic.icon}</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: lic.color, border: `1px solid ${lic.color}50` }}>
+                    {lic.code}
+                  </span>
+                </div>
+                <div className="font-display font-bold text-sm" style={{ color: lic.color }}>{lic.name}</div>
+                <div className="text-[10px] text-stardust/50 mt-0.5">{lic.questionsCount} 题 · 20 分钟</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
